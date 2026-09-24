@@ -5,7 +5,7 @@ import { date, dateTime, daysUntil, label } from '@/lib/format';
 export const dynamic = 'force-dynamic';
 
 export default async function Today() {
-  const [[k], actions, auctions, followups] = await Promise.all([
+  const [[k], actions, auctions, followups, [{ f }]] = await Promise.all([
     sql`select
           (select count(*) from lead_scores where lead_tier = 'A')::int as tier_a,
           (select count(*) from lead_scores where lead_tier = 'B')::int as tier_b,
@@ -27,7 +27,10 @@ export default async function Today() {
          where d.next_follow_up_at <= now() + interval '1 day'
            and d.stage not in ('closed','lost','dead')
          order by d.next_follow_up_at limit 15`,
+    sql`select funnel(90) as f`,
   ]);
+  const steps = [['Filings', f.filings], ['Matched to a parcel', f.matched], ['Mailed', f.mailed], ['Any contact', f.touched],
+    ['Talked', f.talked], ['Appointment', f.appointment], ['Contract', f.contract], ['Closed', f.closed]];
 
   return (
     <>
@@ -43,6 +46,23 @@ export default async function Today() {
         <Kpi v={k.new_7d} label="New records · 7d" />
         <Kpi v={k.touches_7d} label="Touches · 7d" />
       </div>
+
+      <section className="card" style={{ marginBottom: 16 }}>
+        <h2>Funnel <span className="muted">· filings recorded in the last {f.days} days</span></h2>
+        <div className="funnel">
+          {steps.map(([name, v], i) => {
+            const prev = i ? steps[i - 1][1] : null;
+            return (
+              <div key={name} className="funnel-step">
+                <div className="v">{Number(v).toLocaleString()}</div>
+                <div className="k">{name}</div>
+                {prev ? <div className="muted small">{Math.round((v / prev) * 100)}% of prior</div> : <div className="muted small">&nbsp;</div>}
+              </div>
+            );
+          })}
+        </div>
+        <div className="muted small" style={{ marginTop: 8 }}>The step with the steepest drop is where your time goes next. Nobody closes deals from the first two boxes.</div>
+      </section>
 
       <div className="grid two">
         <section className="card">

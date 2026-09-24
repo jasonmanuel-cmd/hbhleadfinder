@@ -2,19 +2,20 @@ import { sql } from '@/lib/db';
 import { label, dateTime } from '@/lib/format';
 import { Flash } from '@/components/ui';
 import { COLLECTORS } from '@/lib/ingest';
-import { pullNow, buildHistories } from './actions';
+import { pullNow, buildHistories, fillAddresses } from './actions';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export default async function Sources({ searchParams }) {
   const sp = await searchParams;
-  const [perf, queue, juris, runs] = await Promise.all([
+  const [perf, queue, juris, runs, [na]] = await Promise.all([
     sql`select * from v_source_performance order by contracts desc, tier_ab desc, records_received desc`,
     sql`select * from v_queue_health`,
     sql`select j.state, j.county, j.active, s.foreclosure_type, s.equity_purchase_statute
           from jurisdictions j join state_rules s on s.state = j.state order by j.active desc, j.state, j.county`,
     sql`select * from source_runs order by started_at desc limit 10`,
+    sql`select (select count(*) from v_needs_address)::int as addr, (select count(*) from tax_defaults)::int as tax`,
   ]);
   const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
   return (
@@ -34,6 +35,13 @@ export default async function Sources({ searchParams }) {
               <button className="btn" formAction={buildHistories}>Build histories</button></div>
           </form>
         ))}
+        <form action={fillAddresses} className="toolbar" style={{ marginBottom: 12 }}>
+          <div style={{ flex: 2 }}><strong>Street addresses from APN</strong>
+            <div className="muted small">{na.addr} leads have an APN but no street address (tax-list parcels owing $5,000+ and any
+              filing matched by parcel). Filled from Kern's parcel map, best leads first, about 200 per click; the daily pull does 60.
+              {' '}{na.tax.toLocaleString()} tax-defaulted parcels on file for name matching.</div></div>
+          <div><button className="btn">Fill addresses</button></div>
+        </form>
         {runs.length > 0 && (
           <div className="table-wrap"><table>
             <thead><tr><th>Run</th><th>Window</th><th className="num">Filings</th><th className="num">New</th><th className="num">Attached</th><th className="num">Need parcel</th><th>Status</th></tr></thead>

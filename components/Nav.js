@@ -14,6 +14,7 @@ export default async function Nav() {
             <a className="link" href="/leads">Leads</a>
             <a className="link" href="/add">Add / Import</a>
             <a className="link" href="/review">Review</a>
+            <a className="link" href="/letters">Letters</a>
             <a className="link" href="/sources">Sources</a>
             <span className="spacer" />
             <form action={logout} className="inline"><button className="btn sm">Sign out</button></form>

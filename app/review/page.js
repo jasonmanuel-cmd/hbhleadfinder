@@ -1,7 +1,7 @@
 import { sql } from '@/lib/db';
 import { Flash } from '@/components/ui';
 import { ev, date, dateTime, label, DEATH_SIGNALS } from '@/lib/format';
-import { fixAndRetry, ignore } from './actions';
+import { fixAndRetry, ignore, restoreSkipped } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,9 +37,10 @@ function lookupLinks(people, signal, county) {
 
 export default async function Review({ searchParams }) {
   const sp = await searchParams;
-  const [match, rows] = await Promise.all([
+  const [match, rows, skipped] = await Promise.all([
     sql`select * from v_needs_match limit 200`,
     sql`select * from v_needs_review limit 200`,
+    sql`select * from v_auto_skipped limit 100`,
   ]);
   return (
     <>
@@ -76,6 +77,7 @@ export default async function Review({ searchParams }) {
                       {people.map((p) => <div key={p.name}><strong>{p.name}</strong> <span className="muted">{label(p.role)}</span></div>)}
                       <div style={{ marginTop: 6 }}>{(r.summary || []).map((x) => <span key={x} className="chip">{x}</span>)}</div>
                       {r.history_error && <div className="muted">History lookup failed: {r.history_error}</div>}
+                      {r.processing_error?.startsWith('Tax-default') && <div className="badge small" style={{ marginTop: 4 }}>{r.processing_error}</div>}
                     </td>
                     <td className="small">
                       {links.length === 0 ? <span className="muted">No person to look up</span> : links.map((l) => (
@@ -105,6 +107,28 @@ export default async function Review({ searchParams }) {
           </table>
         )}
       </section>
+
+      {skipped.length > 0 && (
+        <section className="card table-wrap" style={{ marginBottom: 16 }}>
+          <details>
+            <summary><strong>Auto-skipped</strong> <span className="muted">· {skipped.length} in the last 60 days · foreclosed, deeded away, or priority under 15</span></summary>
+            <table style={{ marginTop: 8 }}>
+              <thead><tr><th>Filing</th><th>People</th><th>Why</th><th></th></tr></thead>
+              <tbody>
+                {skipped.map((r) => (
+                  <tr key={r.id}>
+                    <td className="small"><strong>{ev(r.source_type)}</strong><div className="muted">Doc {r.document_number} · {date(r.recorded_date)}</div></td>
+                    <td className="small">{(r.people?.length ? r.people.map((p) => p.name) : [r.raw_owner_name]).filter(Boolean).join(' · ')}</td>
+                    <td className="small">{r.processing_error.replace('Auto-skipped: ', '')}
+                      <div>{(r.summary || []).slice(0, 3).map((x) => <span key={x} className="chip">{x}</span>)}</div></td>
+                    <td><form action={restoreSkipped}><input type="hidden" name="id" value={r.id} /><button className="btn sm">Restore</button></form></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        </section>
+      )}
 
       <section className="card table-wrap">
         <h2>Data problems <span className="muted">· {rows.length}</span></h2>

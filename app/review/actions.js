@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { sql, dbError } from '@/lib/db';
 import { str } from '@/lib/format';
 import { completeParcel } from '@/lib/parcels';
+import { existingApn, fixPropertyAddress } from '@/lib/parcelFill';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -20,12 +21,15 @@ export async function fixAndRetry(fd) {
     const czCity = cz.replace(/\b\d{5}(-\d{4})?\b/, '').replace(/,?\s*(CA|California)\s*$/i, '').replace(/[,\s]+$/, '').trim() || null;
     const p = await completeParcel({ state: row.raw_state, county: row.raw_county, apn: str(fd, 'raw_apn'),
       address: str(fd, 'raw_address'), city: str(fd, 'raw_city') || czCity, zip: str(fd, 'raw_zip') || czZip });
+    // attach to a parcel we already track (tax list keys it by ATN) rather than duplicating it
+    p.apn = await existingApn(row.raw_state, row.raw_county, p.apn);
     await sql`update raw_lead_intake set
                 raw_apn = ${p.apn}, raw_address = ${p.address},
                 raw_city = coalesce(${p.city}, raw_city), raw_zip = coalesce(${p.zip}, raw_zip),
                 processing_status = 'pending', processing_error = null
               where id = ${id} and processing_status in ('needs_review','failed','needs_property_match')`;
     const [{ res }] = await sql`select process_raw_property_lead(${id}) as res`;
+    if (res.status === 'processed' && p.address) await fixPropertyAddress(res.property_id, p);
     if (res.status === 'processed') dest = `/leads/${res.property_id}?ok=${encodeURIComponent(`Lead created and scored.${p.note ? ` ${p.note}.` : ''}`)}`;
     else msg = `Still needs review: ${res.reason || res.error}`;
   } catch (e) {
@@ -38,4 +42,14 @@ export async function ignore(fd) {
   const id = String(fd.get('id') || '');
   if (UUID.test(id)) await sql`update raw_lead_intake set processing_status = 'ignored' where id = ${id}`;
   redirect('/review?ok=Ignored.');
+}
+
+export async function restoreSkipped(fd) {
+  const id = String(fd.get('id') || '');
+  if (UUID.test(id)) {
+    await sql`update raw_lead_intake set processing_status = 'needs_property_match',
+                processing_error = 'Restored by hand — auto-skip overridden'
+              where id = ${id} and processing_status = 'ignored'`;
+  }
+  redirect('/review?ok=Restored to the match queue.');
 }

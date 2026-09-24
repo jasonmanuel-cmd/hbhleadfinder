@@ -46,15 +46,22 @@ export default async function LeadPage({ params, searchParams }) {
       <p className="small"><a href="/leads">← Leads</a></p>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <Tier t={score?.lead_tier} />
-        <h1>{p.address_line_1 || `APN ${p.apn}`}</h1>
+        <h1>{p.address_line_1 && !/^\s*(APN|ATN)\b/i.test(p.address_line_1) ? p.address_line_1 : `APN ${p.apn}`}</h1>
       </div>
       <p className="sub">
         {[p.city, p.county && `${p.county} County`, p.state, p.zip].filter(Boolean).join(', ')}
         {p.apn && <> · APN {p.apn}</>}
+        {p.apn && p.state === 'CA' && p.county === 'Kern' && <> · <a href="https://www.kcttc.co.kern.ca.us/Payment/mainsearch.aspx" target="_blank" rel="noreferrer">Tax bill</a>
+          {' '}· <a href={`https://maps.kerncounty.com/H5/index.html?viewer=KCPublic`} target="_blank" rel="noreferrer">Parcel map</a></>}
         {nextAuction && <> · <strong>Auction {date(nextAuction)} ({daysUntil(nextAuction)}d)</strong></>}
         {!nextAuction && score?.est_sale_date && <> · <strong>Est. earliest sale {date(score.est_sale_date)} ({daysUntil(score.est_sale_date)}d)</strong></>}
       </p>
       <Flash sp={sp} />
+      {p.source_metadata?.apn_from === 'tax_default_name_match' && p.data_confidence !== 'manual' && (
+        <div className="alert warn"><strong>Parcel matched by owner name.</strong> This filing was tied to APN {p.apn} because the same name
+          is on the county's delinquent-tax list. Owners can hold more than one parcel — confirm the filing is for this property
+          before mailing. Saving the underwriting form marks it confirmed.</div>
+      )}
 
       {score?.equity_purchase_law_applies && (
         <div className="alert warn">
