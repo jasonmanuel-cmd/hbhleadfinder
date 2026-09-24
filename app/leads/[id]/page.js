@@ -17,7 +17,7 @@ export default async function LeadPage({ params, searchParams }) {
   const [[p]] = await Promise.all([sql`select * from properties where id = ${id}`]);
   if (!p) notFound();
 
-  const [[score], events, owners, touches, [deal], jobs, [rules]] = await Promise.all([
+  const [[score], events, owners, touches, [deal], jobs, [rules], dossiers] = await Promise.all([
     sql`select * from lead_scores where property_id = ${id}`,
     sql`select * from distress_events where property_id = ${id}
          order by coalesce(event_date, recorded_date, created_at::date) desc`,
@@ -30,6 +30,9 @@ export default async function LeadPage({ params, searchParams }) {
     sql`select enrichment_type, status, attempts, last_error from enrichment_jobs
          where property_id = ${id} order by created_at desc`,
     sql`select * from state_rules where state = ${p.state}`,
+    sql`select d.*, i.source_type, i.raw_payload ->> 'document_number' as filing_doc
+          from borrower_dossiers d join raw_lead_intake i on i.id = d.intake_id
+         where i.property_id = ${id} order by d.fetched_at desc`,
   ]);
 
   const r = score?.score_reasoning || {};
@@ -49,6 +52,7 @@ export default async function LeadPage({ params, searchParams }) {
         {[p.city, p.county && `${p.county} County`, p.state, p.zip].filter(Boolean).join(', ')}
         {p.apn && <> · APN {p.apn}</>}
         {nextAuction && <> · <strong>Auction {date(nextAuction)} ({daysUntil(nextAuction)}d)</strong></>}
+        {!nextAuction && score?.est_sale_date && <> · <strong>Est. earliest sale {date(score.est_sale_date)} ({daysUntil(score.est_sale_date)}d)</strong></>}
       </p>
       <Flash sp={sp} />
 
@@ -77,12 +81,16 @@ export default async function LeadPage({ params, searchParams }) {
                 <ScoreRow k="Exit" v={score.exit_score} max={15} />
                 {score.risk_score > 0 && <ScoreRow k="Risk" v={-score.risk_score} max={40} neg />}
                 <p className="muted small" style={{ marginBottom: 0 }}>
-                  Equity: {typeof r.equity_pct === 'number' ? `${Math.round(r.equity_pct * 100)}%` : 'unknown — add value + loan balance'}
+                  Equity: {typeof r.equity_pct === 'number' ? `${Math.round(r.equity_pct * 100)}%`
+                    : `unknown — add value + loan balance${r.equity_hint && r.equity_hint !== 'unknown' ? ` (recorded history suggests ${r.equity_hint})` : ''}`}
                   {' · '}Foreclosure active: {r.foreclosure_active ? 'yes' : 'no'}
                   {r.risk_no_cash_margin && ' · No cash margin at 70% rule'}
                   {r.risk_multi_owner_no_decision_maker && ' · Multiple owners, no decision-maker'}
                   {r.risk_auction_imminent_unverified && ' · Auction ≤7 days, title unverified'}
                   {r.risk_bankruptcy && ' · Bankruptcy on record'}
+                  {r.risk_solar_lien && ' · Solar lien/lease'}
+                  {r.risk_recorded_liens && ` · ${r.risk_recorded_liens} unreleased lien(s)`}
+                  {r.risk_already_transferred && ' · Already foreclosed or deeded away'}
                 </p>
               </>
             ) : <div className="empty">Not scored yet.</div>}
@@ -200,6 +208,33 @@ export default async function LeadPage({ params, searchParams }) {
               </ul>
             )}
           </section>
+
+          {/* Recorder history */}
+          {dossiers.length > 0 && (
+            <section className="card">
+              <h2>Recorded history <span className="muted small">· county index, by owner name</span></h2>
+              {dossiers.map((d) => (
+                <div key={d.intake_id} style={{ marginBottom: 10 }}>
+                  <div className="muted small">{d.names.join(', ')} · {d.doc_count} documents{d.truncated ? ' (common name — verify)' : ''} · from {ev(d.source_type)} {d.filing_doc}</div>
+                  {d.error ? <div className="muted small">Lookup failed: {d.error}</div> : (
+                    <>
+                      <div style={{ margin: '6px 0' }}>{(d.summary || []).map((x) => <span key={x} className="chip">{x}</span>)}</div>
+                      <details>
+                        <summary className="small">All {Math.min(d.doc_count, 60)} documents</summary>
+                        <table><tbody>
+                          {(d.docs || []).map((x) => (
+                            <tr key={x.doc}><td className="small">{x.date}</td><td className="small">{x.type}</td>
+                              <td className="small muted">{x.parties.join(' · ')}</td></tr>
+                          ))}
+                        </tbody></table>
+                      </details>
+                    </>
+                  )}
+                </div>
+              ))}
+              <p className="muted small" style={{ marginBottom: 0 }}>Screening only. Names can collide — confirm loans and liens with a preliminary title report before any offer.</p>
+            </section>
+          )}
 
           {/* People */}
           <section className="card">

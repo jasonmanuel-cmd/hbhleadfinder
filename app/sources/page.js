@@ -2,10 +2,10 @@ import { sql } from '@/lib/db';
 import { label, dateTime } from '@/lib/format';
 import { Flash } from '@/components/ui';
 import { COLLECTORS } from '@/lib/ingest';
-import { pullNow } from './actions';
+import { pullNow, buildHistories } from './actions';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 export default async function Sources({ searchParams }) {
   const sp = await searchParams;
@@ -28,9 +28,10 @@ export default async function Sources({ searchParams }) {
           <form key={id} action={pullNow} className="toolbar" style={{ marginBottom: 12 }}>
             <input type="hidden" name="source" value={id} />
             <div style={{ flex: 2 }}><strong>{c.label}</strong>
-              <div className="muted small">Runs daily at 8am Pacific · re-reads the last {c.lookbackDays} days so late-indexed filings are caught · duplicates skipped</div></div>
+              <div className="muted small">Runs daily at 8am Pacific · re-reads the last {c.lookbackDays} days so late-indexed filings are caught · duplicates skipped · builds each owner's recorded history</div></div>
             <div style={{ minWidth: 110 }}><label>Days back</label><input name="days" defaultValue={c.lookbackDays} inputMode="numeric" /></div>
-            <div style={{ minWidth: 0 }}><button className="btn primary">Pull now</button></div>
+            <div style={{ minWidth: 0 }}><button className="btn primary">Pull now</button>{' '}
+              <button className="btn" formAction={buildHistories}>Build histories</button></div>
           </form>
         ))}
         {runs.length > 0 && (
@@ -42,7 +43,8 @@ export default async function Sources({ searchParams }) {
                 <td className="small">{String(r.window_from?.toISOString?.() ?? r.window_from).slice(0, 10)} → {String(r.window_to?.toISOString?.() ?? r.window_to).slice(0, 10)}</td>
                 <td className="num">{r.fetched}</td><td className="num">{r.inserted}</td><td className="num">{r.matched}</td>
                 <td className="num">{r.needs_match > 0 ? <a href="/review">{r.needs_match}</a> : 0}</td>
-                <td className="small">{r.status === 'error' ? <span className="badge flag">{r.error}</span> : label(r.status)}</td>
+                <td className="small">{r.status === 'error' ? <span className="badge flag">{r.error}</span> : label(r.status)}
+                  {r.note && <div className="muted">{r.note}</div>}</td>
               </tr>
             ))}</tbody>
           </table></div>

@@ -1,7 +1,7 @@
 import { runCollector, COLLECTORS } from '@/lib/ingest';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // Called by Vercel Cron with `Authorization: Bearer $CRON_SECRET`
 export async function GET(req, { params }) {

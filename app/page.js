@@ -51,7 +51,7 @@ export default async function Today() {
             <div className="empty">No Tier A/B leads yet. <a href="/add">Add or import leads</a>, then underwrite them on the lead page.</div>
           ) : (
             <div className="table-wrap"><table>
-              <thead><tr><th></th><th>Property</th><th>Signals</th><th className="num">Score</th><th>Auction</th><th>Stage</th></tr></thead>
+              <thead><tr><th></th><th>Property</th><th>Signals</th><th className="num">Score</th><th>Sale</th><th>Stage</th></tr></thead>
               <tbody>
                 {actions.map((a) => (
                   <tr key={a.property_id}>
@@ -63,7 +63,8 @@ export default async function Today() {
                     </td>
                     <td><Signals list={a.signals} /></td>
                     <td className="num">{a.total_score}</td>
-                    <td>{a.next_auction ? <>{date(a.next_auction)}<div className="muted small">{daysUntil(a.next_auction)}d</div></> : '—'}</td>
+                    <td>{a.next_auction ? <>{date(a.next_auction)}<div className="muted small">{daysUntil(a.next_auction)}d</div></>
+                      : a.est_sale_date ? <>~{date(a.est_sale_date)}<div className="muted small">est. {daysUntil(a.est_sale_date)}d</div></> : '—'}</td>
                     <td>{label(a.stage)}</td>
                   </tr>
                 ))}
