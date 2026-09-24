@@ -1,0 +1,17 @@
+{
+  "name": "hbh-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "15.5.26",
+    "postgres": "3.4.9",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "engines": { "node": ">=20" }
+}
