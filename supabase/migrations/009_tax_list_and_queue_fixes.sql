@@ -51,7 +51,7 @@ begin
   return n;
 end $$;
 
--- Letter queue: real street addresses only; a bare tax delinquency needs real arrears to be worth postage
+-- Letter queue: real street address with ZIP, and a recorder/court signal (not a bare tax delinquency)
 drop view if exists v_letter_queue;
 create view v_letter_queue with (security_invoker = true) as
 with ev as (
@@ -97,7 +97,8 @@ select p.id as property_id, p.address_line_1, p.city, p.state, p.zip, p.apn,
   left join lead_scores ls on ls.property_id = p.id
   left join deals d on d.property_id = p.id
  where real_address(p.address_line_1) and nullif(p.zip, '') is not null
-   and (ev.has_strong_signal or coalesce(ev.tax_owed, 0) >= 5000)
+   -- tax-only parcels: the list has no mailing address and many owners are absentee — don't mail the situs
+   and ev.has_strong_signal
    and coalesce(d.stage, 'new') in ('new','researching','contacted','nurture')
    and not coalesce(ev.resolved, false)
    and not coalesce(lt.engaged, false)
@@ -117,7 +118,7 @@ select p.id as property_id, p.state, p.county, p.apn, p.apn_key, p.address_line_
   left join lead_scores ls on ls.property_id = p.id
  where (not real_address(p.address_line_1) or nullif(p.zip, '') is null) and p.apn_key is not null
    and exists (select 1 from distress_events de where de.property_id = p.id
-                and (de.event_type not in ('tax_default','tax_lien','judgment_lien') or coalesce(de.amount_owed, 0) >= 5000))
+                and de.event_type not in ('tax_default','tax_lien','judgment_lien'))
    and coalesce(p.source_metadata ->> 'address_lookup', '') <> 'none'
  order by ls.total_score desc nulls last;
 

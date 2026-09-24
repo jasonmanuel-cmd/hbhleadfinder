@@ -37,8 +37,8 @@ export default async function Sources({ searchParams }) {
         ))}
         <form action={fillAddresses} className="toolbar" style={{ marginBottom: 12 }}>
           <div style={{ flex: 2 }}><strong>Street addresses from APN</strong>
-            <div className="muted small">{na.addr} leads have an APN but no street address (tax-list parcels owing $5,000+ and any
-              filing matched by parcel). Filled from Kern's parcel map, best leads first, about 200 per click; the daily pull does 60.
+            <div className="muted small">{na.addr} leads with a recorder or court signal have an APN but no street address or ZIP.
+              Filled from Kern's parcel map plus the Census geocoder, best leads first, about 200 per click; the daily pull does 60.
               {' '}{na.tax.toLocaleString()} tax-defaulted parcels on file for name matching.</div></div>
           <div><button className="btn">Fill addresses</button></div>
         </form>
