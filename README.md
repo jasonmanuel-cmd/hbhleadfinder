@@ -27,22 +27,37 @@ Built multi-state from day one: state law and county sources live in data (`stat
 
 ## Automatic feed: Kern County Recorder (free)
 A daily Vercel Cron (`vercel.json`, 8am Pacific) calls `/api/cron/kern_recorder` with `Authorization: Bearer $CRON_SECRET`.
-It reads the county's public *Search by Document Class* index for the last 10 days (re-reads overlap; duplicates are skipped by document number):
+It reads the county's public *Search by Document Class* index for the last 10 days (overlapping re-reads; duplicates
+skipped by document number):
 
-| Class | Signal |
-|---|---|
-| 0043 Default Notice | `notice_of_default` |
-| 0038 Notice of Trustee's Sale | `notice_of_trustee_sale` |
-| 0044 Cancel Default Notice | `notice_of_rescission` |
+| Class | Signal | Kind |
+|---|---|---|
+| 0043 Default Notice | `notice_of_default` | lead |
+| 0038 Notice of Trustee's Sale | `notice_of_trustee_sale` | lead |
+| 0703 Affidavit – TOD (decedent marked DECD) | `tod_affidavit` | lead — heir is the decision-maker |
+| 0028 Affidavit – Joint Tenants | `death_joint_tenant` | lead — surviving owner |
+| 0184 / 0183 Letters Testamentary / Administration | `letters_testamentary` | lead — executor/administrator |
+| 0044 Cancel Default Notice | `notice_of_rescission` | attach-only |
+| 0059 / 0060 / 0061 Tax liens, 0040 Abstract Judgment | `tax_lien`, `judgment_lien` | attach-only |
 
-The index gives **document number, date and borrower names only — no APN or address.** So:
-- If a borrower name matches an owner already tracked in that county, the filing attaches to that property automatically
-  (e.g. an NTS following an NOD you already have, or a rescission that ends the foreclosure).
-- Otherwise it lands in **Review → Find the parcel**. Look the owner up (ParcelQuest / parcel maps), enter the APN or address,
-  and the lead is created, scored, and flagged for the equity-purchase statute.
-- Rescissions with no tracked property are ignored.
+The index gives **document number, date and names only — no APN or address.**
+- Names that match an owner already tracked in the county attach to that property automatically.
+- Attach-only filings (rescissions, liens, judgments) are ignored unless they match a tracked property.
+- Everything else lands in **Review → Find the parcel**.
 
-"Pull now" on the Sources page runs the same collector on demand. Every run is logged in `source_runs`.
+### Owner-history dossiers (free)
+For every lead filing the collector searches the county's grantor/grantee index by name and builds a dossier:
+loan dates, loans vs. reconveyances, loan modifications, earlier default episodes (last 15 years, >1 year before this filing),
+solar UCC filings, unreleased tax liens/judgments, recorded deaths, and transfers or trustee's deeds after the filing.
+It yields an equity hint (`high` / `moderate` / `thin` / `unverified` for common names), a 0–100 priority that orders the
+Find-the-parcel queue, and feeds the lead score (provisional equity, lien/solar risk, "already gone" kill switch).
+Screening only — names collide; confirm with a preliminary title report.
+
+### Timeline and follow-ups
+`estimated_sale_date()` gives the earliest likely sale: scheduled auction → NTS + 21 days → NOD + 111 days.
+New leads get an automatic first follow-up: NTS 1 day, NOD 2 days, letters 14 days, deaths 30 days (letter only).
+
+"Pull now" and "Build histories" on the Sources page run the same jobs on demand; runs are logged in `source_runs`.
 
 ## Dashboard
 | Page | Purpose |
