@@ -1,20 +1,53 @@
 import { sql } from '@/lib/db';
 import { label, dateTime } from '@/lib/format';
+import { Flash } from '@/components/ui';
+import { COLLECTORS } from '@/lib/ingest';
+import { pullNow } from './actions';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
-export default async function Sources() {
-  const [perf, queue, juris] = await Promise.all([
+export default async function Sources({ searchParams }) {
+  const sp = await searchParams;
+  const [perf, queue, juris, runs] = await Promise.all([
     sql`select * from v_source_performance order by contracts desc, tier_ab desc, records_received desc`,
     sql`select * from v_queue_health`,
     sql`select j.state, j.county, j.active, s.foreclosure_type, s.equity_purchase_statute
           from jurisdictions j join state_rules s on s.state = j.state order by j.active desc, j.state, j.county`,
+    sql`select * from source_runs order by started_at desc limit 10`,
   ]);
   const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
   return (
     <>
       <h1>Sources</h1>
       <p className="sub">Judge sources by contracts, not record counts. A source with volume and no appointments gets cut.</p>
+      <Flash sp={sp} />
+      <section className="card" style={{ marginBottom: 16 }}>
+        <h2>Automatic feeds</h2>
+        {Object.entries(COLLECTORS).map(([id, c]) => (
+          <form key={id} action={pullNow} className="toolbar" style={{ marginBottom: 12 }}>
+            <input type="hidden" name="source" value={id} />
+            <div style={{ flex: 2 }}><strong>{c.label}</strong>
+              <div className="muted small">Runs daily at 8am Pacific · re-reads the last {c.lookbackDays} days so late-indexed filings are caught · duplicates skipped</div></div>
+            <div style={{ minWidth: 110 }}><label>Days back</label><input name="days" defaultValue={c.lookbackDays} inputMode="numeric" /></div>
+            <div style={{ minWidth: 0 }}><button className="btn primary">Pull now</button></div>
+          </form>
+        ))}
+        {runs.length > 0 && (
+          <div className="table-wrap"><table>
+            <thead><tr><th>Run</th><th>Window</th><th className="num">Filings</th><th className="num">New</th><th className="num">Attached</th><th className="num">Need parcel</th><th>Status</th></tr></thead>
+            <tbody>{runs.map((r) => (
+              <tr key={r.id}>
+                <td className="small">{dateTime(r.started_at)}<div className="muted">{r.source_id} · {r.trigger}</div></td>
+                <td className="small">{String(r.window_from?.toISOString?.() ?? r.window_from).slice(0, 10)} → {String(r.window_to?.toISOString?.() ?? r.window_to).slice(0, 10)}</td>
+                <td className="num">{r.fetched}</td><td className="num">{r.inserted}</td><td className="num">{r.matched}</td>
+                <td className="num">{r.needs_match > 0 ? <a href="/review">{r.needs_match}</a> : 0}</td>
+                <td className="small">{r.status === 'error' ? <span className="badge flag">{r.error}</span> : label(r.status)}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )}
+      </section>
       <section className="card table-wrap" style={{ marginBottom: 16 }}>
         <h2>Source → contract funnel</h2>
         <table>

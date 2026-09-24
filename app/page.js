@@ -12,6 +12,7 @@ export default async function Today() {
           (select count(*) from deals where next_follow_up_at <= now()
              and stage not in ('closed','lost','dead'))::int as due,
           (select count(*) from raw_lead_intake where processing_status in ('needs_review','failed'))::int as review,
+          (select count(*) from raw_lead_intake where processing_status = 'needs_property_match')::int as match,
           (select count(*) from raw_lead_intake where received_at > now() - interval '7 days')::int as new_7d,
           (select count(*) from outreach where attempted_at > now() - interval '7 days')::int as touches_7d`,
     sql`select * from v_action_list limit 25`,
@@ -37,7 +38,8 @@ export default async function Today() {
         <Kpi v={k.tier_a} label="Tier A leads" />
         <Kpi v={k.tier_b} label="Tier B leads" />
         <Kpi v={k.due} label="Follow-ups due" href="#followups" />
-        <Kpi v={k.review} label="Needs review" href="/review" />
+        <Kpi v={k.match} label="Filings to match" href="/review" />
+        <Kpi v={k.review} label="Data problems" href="/review" />
         <Kpi v={k.new_7d} label="New records · 7d" />
         <Kpi v={k.touches_7d} label="Touches · 7d" />
       </div>

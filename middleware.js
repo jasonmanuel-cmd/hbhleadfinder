@@ -4,6 +4,8 @@ import { COOKIE, sessionToken, safeEqual } from '@/lib/auth';
 export async function middleware(req) {
   const { pathname } = req.nextUrl;
   if (pathname.startsWith('/login')) return NextResponse.next();
+  // cron endpoints authenticate themselves with CRON_SECRET
+  if (pathname.startsWith('/api/cron/')) return NextResponse.next();
   if (!process.env.DASHBOARD_PASSWORD || !process.env.SESSION_SECRET) {
     return new NextResponse('Dashboard is not configured.', { status: 503 });
   }

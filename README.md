@@ -25,6 +25,25 @@ Built multi-state from day one: state law and county sources live in data (`stat
 - **Opt-outs**: logging `opted_out` marks the person do-not-contact; later outbound touches are rejected.
   Channel-level DNC / SMS / email opt-outs are enforced the same way.
 
+## Automatic feed: Kern County Recorder (free)
+A daily Vercel Cron (`vercel.json`, 8am Pacific) calls `/api/cron/kern_recorder` with `Authorization: Bearer $CRON_SECRET`.
+It reads the county's public *Search by Document Class* index for the last 10 days (re-reads overlap; duplicates are skipped by document number):
+
+| Class | Signal |
+|---|---|
+| 0043 Default Notice | `notice_of_default` |
+| 0038 Notice of Trustee's Sale | `notice_of_trustee_sale` |
+| 0044 Cancel Default Notice | `notice_of_rescission` |
+
+The index gives **document number, date and borrower names only — no APN or address.** So:
+- If a borrower name matches an owner already tracked in that county, the filing attaches to that property automatically
+  (e.g. an NTS following an NOD you already have, or a rescission that ends the foreclosure).
+- Otherwise it lands in **Review → Find the parcel**. Look the owner up (ParcelQuest / parcel maps), enter the APN or address,
+  and the lead is created, scored, and flagged for the equity-purchase statute.
+- Rescissions with no tracked property are ignored.
+
+"Pull now" on the Sources page runs the same collector on demand. Every run is logged in `source_runs`.
+
 ## Dashboard
 | Page | Purpose |
 |---|---|
@@ -42,7 +61,7 @@ CSV columns: `source,signal,state,county,apn,address,city,zip,owner,party_role,e
 1. Apply `supabase/migrations/*.sql` in order.
 2. Give the dashboard role a login (never commit this):
    `alter role hbh_dashboard with login password '<secret>';`
-3. Set the env vars from `.env.example` in Vercel.
+3. Set the env vars from `.env.example` in Vercel (plus `CRON_SECRET` for scheduled feeds).
 4. `npm install && npm run build`.
 
 The dashboard connects as `hbh_dashboard`, a least-privilege role with RLS policies — never the service-role key.
