@@ -5,8 +5,35 @@ import { fixAndRetry, ignore } from './actions';
 
 export const dynamic = 'force-dynamic';
 
-const PARCEL_LOOKUP = 'https://www.kerncounty.com/government/departments/assessor-recorder/property/parcelquest-property-search';
-const MAP_SEARCH = 'https://www.kerncounty.com/government/departments/assessor-recorder/property/assessor-parcel-map-search';
+const g = (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+const ENTITY = /\b(LLC|INC|CORP|CO|TRUST|TR|BANK|ASSN|LP|LTD|ESTATE|EST|COUNTY|CITY|STATE)\b/;
+// Recorder names are "LAST FIRST MIDDLE"; people-search sites want "First Last"
+function firstLast(n) {
+  const t = String(n || '').replace(/\s+(DECD|EST|EXTR|ADMR|TR)$/i, '').trim().split(/\s+/);
+  if (t.length < 2 || ENTITY.test(t.join(' '))) return null;
+  const cap = (w) => w.charAt(0) + w.slice(1).toLowerCase();
+  return `${cap(t[1])} ${cap(t[0])}`;
+}
+function lookupLinks(people, signal, county) {
+  const links = [];
+  const seen = new Set();
+  for (const p of people) {
+    const fl = firstLast(p.name);
+    if (!fl || seen.has(fl)) continue;
+    seen.add(fl);
+    const where = `${county} County CA`;
+    if (p.role === 'decedent') {
+      links.push({ who: fl, items: [['Obituary', g(`"${fl}" obituary Bakersfield OR "${county} County"`)],
+        ['Old address', `https://www.truepeoplesearch.com/results?${new URLSearchParams({ name: fl, citystatezip: 'CA' })}`]] });
+    } else {
+      links.push({ who: fl, items: [['Address', `https://www.truepeoplesearch.com/results?${new URLSearchParams({ name: fl, citystatezip: 'CA' })}`],
+        ['Alt', `https://www.fastpeoplesearch.com/name/${fl.toLowerCase().replace(/\s+/g, '-')}_ca`],
+        ['Web', g(`"${fl}" ${where}`)]] });
+    }
+    if (links.length >= 3) break;
+  }
+  return links;
+}
 
 export default async function Review({ searchParams }) {
   const sp = await searchParams;
@@ -17,8 +44,8 @@ export default async function Review({ searchParams }) {
   return (
     <>
       <h1>Review</h1>
-      <p className="sub">Records the machine refused to guess on. Recorder filings list borrower names only — find the parcel,
-        enter its APN or address, and the lead is created, scored and flagged.</p>
+      <p className="sub">Records the machine refused to guess on. Recorder filings list names only. Find the person's address with the look-up links,
+        paste it in, and the APN is filled from Kern's parcel map — lead created, scored and flagged.</p>
       <Flash sp={sp} />
 
       <section className="card table-wrap" style={{ marginBottom: 16 }}>
@@ -33,7 +60,7 @@ export default async function Review({ searchParams }) {
                 const people = r.people?.length ? r.people
                   : (r.borrowers?.length ? r.borrowers : [r.raw_owner_name]).filter(Boolean).map((n) => ({ name: n, role: 'owner' }));
                 const names = people.map((p) => p.name);
-                const lookupName = (people.find((p) => p.role === 'decedent') || people[0] || {}).name || '';
+                const links = lookupLinks(people, r.source_type, r.raw_county);
                 const pr = r.priority;
                 return (
                   <tr key={r.id}>
@@ -51,19 +78,23 @@ export default async function Review({ searchParams }) {
                       {r.history_error && <div className="muted">History lookup failed: {r.history_error}</div>}
                     </td>
                     <td className="small">
-                      <div><a href={PARCEL_LOOKUP} target="_blank" rel="noreferrer">ParcelQuest</a></div>
-                      <div><a href={MAP_SEARCH} target="_blank" rel="noreferrer">Parcel maps</a></div>
-                      <div><a href={`https://www.google.com/search?q=${encodeURIComponent(`"${lookupName}" ${r.raw_county} County ${r.raw_state}`)}`} target="_blank" rel="noreferrer">Web search</a></div>
+                      {links.length === 0 ? <span className="muted">No person to look up</span> : links.map((l) => (
+                        <div key={l.who} style={{ marginBottom: 4 }}>
+                          <div className="muted">{l.who}</div>
+                          {l.items.map(([t, u]) => <a key={t} href={u} target="_blank" rel="noreferrer" style={{ marginRight: 8 }}>{t}</a>)}
+                        </div>
+                      ))}
                     </td>
                     <td style={{ minWidth: 340 }}>
                       <form action={fixAndRetry}>
                         <input type="hidden" name="id" value={r.id} />
                         <div className="fields" style={{ marginBottom: 6 }}>
-                          <div><label>APN</label><input name="raw_apn" /></div>
-                          <div style={{ gridColumn: 'span 2' }}><label>Street address</label><input name="raw_address" /></div>
-                          <div><label>ZIP</label><input name="raw_zip" inputMode="numeric" /></div>
+                          <div style={{ gridColumn: 'span 2' }}><label>Street address</label><input name="raw_address" placeholder="123 Main St" /></div>
+                          <div><label>City or ZIP</label><input name="raw_cityzip" /></div>
+                          <div><label>or APN</label><input name="raw_apn" placeholder="000-000-00" /></div>
                         </div>
                         <button className="btn sm primary">Create lead</button>
+                        <div className="muted small" style={{ marginTop: 4 }}>Either one works — the other is filled in from the county parcel map.</div>
                       </form>
                     </td>
                     <td><form action={ignore}><input type="hidden" name="id" value={r.id} /><button className="btn sm danger">Skip</button></form></td>

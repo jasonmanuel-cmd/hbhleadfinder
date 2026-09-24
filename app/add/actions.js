@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { sql, dbError } from '@/lib/db';
 import { parseCsv } from '@/lib/csv';
 import { EVENT_TYPES, str } from '@/lib/format';
+import { completeParcel } from '@/lib/parcels';
 
 const clean = (v) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
 const validDate = (v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
@@ -47,11 +48,17 @@ export async function addLead(fd) {
     const row = Object.fromEntries(['source', 'signal', 'state', 'county', 'apn', 'address', 'city', 'zip', 'owner',
       'party_role', 'event_date', 'document_number', 'case_number', 'auction_date', 'amount_owed', 'notes', 'source_url']
       .map((k) => [k, str(fd, k)]));
+    let note = null;
+    if (row.state && row.county && (row.apn || row.address)) {
+      const p = await completeParcel({ state: row.state, county: row.county, apn: row.apn, address: row.address, city: row.city, zip: row.zip });
+      Object.assign(row, { apn: p.apn, address: p.address, city: p.city, zip: p.zip });
+      note = p.note;
+    }
     const rec = toIntake(row, await sourceSet());
     const [ins] = await sql`insert into raw_lead_intake ${sql(rec)} on conflict do nothing returning id`;
     if (!ins) throw new Error('This record was already imported (same source + record id).');
     const [{ res }] = await sql`select process_raw_property_lead(${ins.id}) as res`;
-    if (res.status === 'processed') dest = `/leads/${res.property_id}?ok=${encodeURIComponent('Lead added and scored.')}`;
+    if (res.status === 'processed') dest = `/leads/${res.property_id}?ok=${encodeURIComponent(`Lead added and scored.${note ? ` ${note}.` : ''}`)}`;
     else dest = `/review?ok=${encodeURIComponent(`Lead saved but needs review: ${res.reason || res.error}`)}`;
   } catch (e) { err = dbError(e); }
   redirect(dest || `/add?error=${encodeURIComponent(err)}`);
