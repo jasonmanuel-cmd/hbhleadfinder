@@ -1,0 +1,6 @@
+# CODEOWNERS - who owns what in this repo
+# @jasonmanuel-cmd is the primary owner for all files
+* @jasonmanuel-cmd
+.github/ @jasonmanuel-cmd
+LICENSE @jasonmanuel-cmd
+SECURITY.md @jasonmanuel-cmd
