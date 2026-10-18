@@ -82,6 +82,22 @@ CSV columns: `source,signal,state,county,apn,address,city,zip,owner,party_role,e
 The dashboard connects as `hbh_dashboard`, a least-privilege role with RLS policies — never the service-role key.
 Database connections use `prepare: false` and `max_pipeline: 0`; Supabase's transaction pooler hangs on pipelined queries.
 
+## Development
+```
+npm run dev     # dashboard on :3000
+npm test        # database contract tests + collector unit tests
+npm run build   # production build
+```
+
+`npm test` needs no database and no Docker: it applies every migration to a real Postgres engine
+(PGlite — Postgres compiled to WASM) and then checks the rules the business depends on — matching,
+scoring, the equity-purchaser compliance guard, do-not-contact enforcement, and the letter queue.
+`test/db.test.mjs` covers the database; `test/collectors.test.mjs` covers the county HTML parser,
+the name formatter and the CSV reader.
+
+Auth lives in `proxy.js` (Next 16's name for the old `middleware.js`). Every page and API route
+requires the session cookie; `/api/cron/*` authenticates with `CRON_SECRET` instead.
+
 ## Adding a market
 ```sql
 insert into state_rules (state, foreclosure_type, equity_purchase_law, equity_purchase_statute, rescission_business_days)

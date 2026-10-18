@@ -9,7 +9,6 @@ on:
 
 jobs:
   analyze:
-    name: Analyze
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -18,12 +17,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ['javascript', 'python']
+        language: ['javascript']
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Initialize CodeQL
-        uses: actions/setup-codeql@v3
+        uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
       - name: Perform CodeQL Analysis

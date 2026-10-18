@@ -6,8 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Every step here is a real gate. Nothing is allowed to fail silently — a red build
+# has to be visible, or the checks are decoration.
 jobs:
-  lint-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,12 +20,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
       - name: Install dependencies
-        run: npm ci || npm install
-      - name: Run Next.js lint
-        run: npx next lint || true
-      - name: Security audit
-        run: npm audit --audit-level=high || true
-      - name: Type check
-        run: npx tsc --noEmit || true
+        run: npm ci
+      - name: Database contract tests
+        # Applies every migration to a real Postgres engine and checks the rules the
+        # business depends on: matching, scoring, compliance guards, do-not-contact.
+        run: npm test
       - name: Build
-        run: npx next build || true
+        run: npm run build
+      - name: Security audit
+        run: npm audit --audit-level=high

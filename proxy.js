@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { COOKIE, sessionToken, safeEqual } from '@/lib/auth';
 
-export async function middleware(req) {
+export async function proxy(req) {
   const { pathname } = req.nextUrl;
   if (pathname.startsWith('/login')) return NextResponse.next();
   // cron endpoints authenticate themselves with CRON_SECRET
