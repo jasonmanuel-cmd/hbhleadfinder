@@ -10,12 +10,55 @@
 
 This is not a half-finished toy. It is a working, well-architected product that was sitting behind
 a broken lockfile and a CI pipeline that was incapable of failing. I got it running, proved it
-works end to end against a real PostgreSQL server, and locked the behaviour down with 31 automated
+works end to end against a real PostgreSQL server, and locked the behaviour down with 36 automated
 tests. The remaining work is a known, bounded list — not a rebuild.
 
 Roughly: **the product is 80–85% done.** The database, the matching/scoring engine, the compliance
 guards, the dashboard and the daily feed all work. What is missing is the *paid enrichment* layer,
 a second market, and some operational hardening.
+
+---
+
+## Update — it now runs with one command
+
+The audit proved the product worked. This pass closed the gap between "the code is sound" and
+"a person can actually run it", which was three separate things:
+
+**`npm run dev:local` now brings the whole system up by itself.** It fetches a real PostgreSQL 18
+binary once (~60 MB, into `./.tools`, isolated from the app's `node_modules`), starts it in
+`./.localdb`, applies all nine migrations, seeds a book of demo leads, and starts Next.js against
+it. No account, no Docker, no Supabase, no API keys. From a cold clone to a working dashboard on
+**http://localhost:3000** takes about six seconds. Sign in with `lead-desk`.
+
+It is the same engine you run in production — real Postgres 18 with plpgsql, RLS and triggers —
+so local is not a simulation of production, it is production's database.
+
+**`npm run db:migrate` replaces "apply the migrations by hand in the Supabase SQL editor."**
+That instruction was the reason the schema was hard to reason about: no ledger, no order check, no
+way to tell what was applied. The script now applies them in order, exactly once, keeping its own
+`schema_migrations` table, and tells you what is pending (`--status`) or re-applies everything
+(`--force`). It creates the `anon` / `authenticated` / `service_role` roles first when they are
+missing, so it works on a plain Postgres as well as on Supabase. Point it at any database:
+`DATABASE_URL="postgresql://..." npm run db:migrate`.
+
+Two bugs that only a real login could surface:
+
+- The session cookie was set with a hard-coded `secure: true`. Browsers that refuse to store a
+  Secure cookie over plain `http://localhost` simply never logged in — so local development looked
+  broken in a way that had nothing to do with the code. It now follows the request protocol
+  (`x-forwarded-proto`), falling back to `NODE_ENV`. Verified both ways: no `Secure` attribute over
+  HTTP, `Secure` present when the request arrives over HTTPS.
+- `npm install --no-save embedded-postgres` reified the entire dependency tree and pruned the
+  app's own devDependencies, taking the test suite down with it. The Postgres binary is now
+  installed with `--prefix ./.tools`, fully isolated.
+
+Also: `package.json` now declares `"type": "module"`, which is what the code actually is — Node was
+re-parsing every `lib/*.js` file as CommonJS and warning about it on every test run.
+
+The Vercel project `hbh-lead-desk` is created and linked to the repo, with `SESSION_SECRET`,
+`CRON_SECRET` and `DASHBOARD_PASSWORD` set and the build verified green. It needs a hosted
+Postgres (`DATABASE_URL`) before it can show any data; that is the one thing I could not do without
+your Supabase credentials. The deployment is otherwise ready.
 
 ---
 
@@ -27,9 +70,12 @@ a second market, and some operational hardening.
 | Migrations apply | PGlite (Postgres 18 / WASM) | 9/9 clean |
 | Business logic | 15 contract tests | **15/15 pass** |
 | Collector logic | 16 unit tests | **16/16 pass** |
+| Session / auth logic | 5 unit tests | **5/5 pass** |
+| One-command local run | `npm run dev:local` from a cold clone | **Works** — real Postgres 18, 9 migrations, demo data, dashboard up in ~6s |
 | Production build | `npm run build` (Next 16.4.2) | Clean, no warnings |
 | Dependency audit | `npm audit --audit-level=high` | 0 vulnerabilities |
 | `npm ci` from a clean tree | `rm -rf node_modules && npm ci` | **Works** (it did not before) |
+| Login round trip | Real POST to the server action | 303 → `/`, `Set-Cookie` with `HttpOnly`+`SameSite=Lax`, `Secure` only over HTTPS |
 | End-to-end runtime | Next.js server → real Postgres 18.4, seeded | All 7 pages **200**, data renders |
 | Auth gating | Unauthenticated requests | `/` → 307 to `/login`; `/api/*` → 401; `/api/cron/*` → 401 without `CRON_SECRET` |
 | XSS surface | grep for `dangerouslySetInnerHTML` / `eval` / `innerHTML` | **None** |
@@ -94,7 +140,7 @@ Zero test files, no test script, no test framework. For a system whose entire va
 "never auto-merge a property, never mail an opted-out person, never skip the equity-purchase
 statute", that is the most consequential gap in the repo.
 
-**Fixed:** 31 tests, no infrastructure required (see below).
+**Fixed:** 36 tests, no infrastructure required (see below).
 
 ---
 
@@ -123,9 +169,19 @@ statute", that is the most consequential gap in the repo.
   foreclosed" kill switch, common-name unverified flag), the CSV reader (quotes, CRLF, BOM) and the
   letter name formatter.
 
+- **`test/auth.test.mjs`** — 5 unit tests on the session helpers: the token is a stable SHA-256
+  digest, it changes when the password or the secret changes, it leaks neither, and `safeEqual`
+  rejects wrong lengths and non-strings without throwing.
+
 - **`npm test`** script. Runs in ~15s.
 
 - **README** now documents the test command and the `proxy.js` convention.
+
+- **`scripts/migrate.mjs` / `scripts/local-db.mjs` / `scripts/dev-local.mjs` / `scripts/seed-demo.mjs`**
+  — the one-command local run and a repeatable migration path (see the update at the top).
+
+- **Vercel project `hbh-lead-desk`** — created, linked to the repo, secrets set, build green. Needs
+  `DATABASE_URL` to show data.
 
 ---
 
