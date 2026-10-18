@@ -23,18 +23,44 @@ const URL = `postgresql://${USER}:${PASSWORD}@127.0.0.1:${PORT}/postgres`;
 const noSeed = process.argv.includes('--no-seed');
 
 // ---------------------------------------------------------------- embedded postgres
-let EmbeddedPostgres;
-try {
-  ({ default: EmbeddedPostgres } = await import('embedded-postgres'));
-} catch {
-  console.log('First run: installing a local PostgreSQL binary (embedded-postgres)...');
-  const r = spawnSync('npm', ['install', '--no-save', 'embedded-postgres'], { cwd: ROOT, stdio: 'inherit' });
+// The Postgres binary is installed into ./.tools, isolated from the app's own
+// dependencies, so fetching it can never disturb the tree npm manages.
+const TOOLS_DIR = path.join(ROOT, '.tools');
+
+async function loadEmbeddedPostgres() {
+  try {
+    return (await import('embedded-postgres')).default;
+  } catch { /* not installed here */ }
+  try {
+    const { createRequire } = await import('node:module');
+    const { pathToFileURL } = await import('node:url');
+    const req = createRequire(path.join(TOOLS_DIR, 'package.json'));
+    const mod = await import(pathToFileURL(req.resolve('embedded-postgres')).href);
+    return mod.default;
+  } catch { /* not installed in .tools either */ }
+  return null;
+}
+
+let EmbeddedPostgres = await loadEmbeddedPostgres();
+if (!EmbeddedPostgres) {
+  console.log('First run: fetching a local PostgreSQL binary (one time, ~60 MB)...');
+  fs.mkdirSync(TOOLS_DIR, { recursive: true });
+  fs.writeFileSync(
+    path.join(TOOLS_DIR, 'package.json'),
+    JSON.stringify({ name: 'hbh-local-tools', private: true, version: '1.0.0' }, null, 2) + '\n',
+  );
+  const r = spawnSync('npm', ['install', '--prefix', TOOLS_DIR, '--no-save', '--no-audit', '--no-fund', 'embedded-postgres'],
+    { cwd: ROOT, stdio: 'inherit' });
   if (r.status !== 0) {
     console.error('\nCould not install embedded-postgres. Install it manually:');
     console.error('  npm i -D embedded-postgres');
     process.exit(1);
   }
-  ({ default: EmbeddedPostgres } = await import('embedded-postgres'));
+  EmbeddedPostgres = await loadEmbeddedPostgres();
+  if (!EmbeddedPostgres) {
+    console.error('embedded-postgres installed but could not be loaded.');
+    process.exit(1);
+  }
 }
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

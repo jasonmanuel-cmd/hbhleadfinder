@@ -10,3 +10,6 @@ out/
 
 # local development database
 .localdb/
+
+# local tooling (Postgres binary for the local database)
+.tools/

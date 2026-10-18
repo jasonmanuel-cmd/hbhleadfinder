@@ -15,7 +15,7 @@ export async function login(formData) {
     // Only mark the cookie Secure when the request actually arrived over https.
     // A hard-coded `secure: true` stops some browsers from storing the cookie at
     // all on http://localhost, which makes local development look broken.
-    secure: isHttps(),
+    secure: await isHttps(),
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 24 * 30,
@@ -28,8 +28,8 @@ export async function logout() {
   redirect('/login');
 }
 
-function isHttps() {
-  const proto = headers().get('x-forwarded-proto');
+async function isHttps() {
+  const proto = (await headers()).get('x-forwarded-proto');
   if (proto) return proto.split(',')[0].trim() === 'https';
   return process.env.NODE_ENV === 'production';
 }
