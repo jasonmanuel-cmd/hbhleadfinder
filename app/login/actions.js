@@ -1,5 +1,5 @@
 'use server';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { COOKIE, sessionToken, safeEqual } from '@/lib/auth';
 
@@ -11,7 +11,14 @@ export async function login(formData) {
     redirect('/login?error=1');
   }
   (await cookies()).set(COOKIE, await sessionToken(), {
-    httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
+    httpOnly: true,
+    // Only mark the cookie Secure when the request actually arrived over https.
+    // A hard-coded `secure: true` stops some browsers from storing the cookie at
+    // all on http://localhost, which makes local development look broken.
+    secure: isHttps(),
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
   });
   redirect('/');
 }
@@ -19,4 +26,10 @@ export async function login(formData) {
 export async function logout() {
   (await cookies()).delete(COOKIE);
   redirect('/login');
+}
+
+function isHttps() {
+  const proto = headers().get('x-forwarded-proto');
+  if (proto) return proto.split(',')[0].trim() === 'https';
+  return process.env.NODE_ENV === 'production';
 }

@@ -8,7 +8,7 @@ Built multi-state from day one: state law and county sources live in data (`stat
 
 ## Stack
 - **Supabase Postgres** — schema, matching, scoring, queue and compliance guards (`supabase/migrations`)
-- **Next.js 15 on Vercel** — dashboard (this repo root)
+- **Next.js 16 on Vercel** — dashboard (this repo root)
 
 ## How a lead flows
 1. Record lands in `raw_lead_intake` (CSV import, single add, or a source connector). Raw payloads are never overwritten.
@@ -26,7 +26,7 @@ Built multi-state from day one: state law and county sources live in data (`stat
   Channel-level DNC / SMS / email opt-outs are enforced the same way.
 
 ## Automatic feed: Kern County Recorder (free)
-A daily Vercel Cron (`vercel.json`, 8am Pacific) calls `/api/cron/kern_recorder` with `Authorization: Bearer $CRON_SECRET`.
+A daily Vercel Cron (`vercel.json`, 8am Pacific / 7am during Pacific standard time) calls `/api/cron/kern_recorder` with `Authorization: Bearer $CRON_SECRET`.
 It reads the county's public *Search by Document Class* index for the last 10 days (overlapping re-reads; duplicates
 skipped by document number):
 
@@ -72,21 +72,55 @@ New leads get an automatic first follow-up: NTS 1 day, NOD 2 days, letters 14 da
 CSV columns: `source,signal,state,county,apn,address,city,zip,owner,party_role,event_date,recorded_date,document_number,case_number,auction_date,amount_owed,source_record_id,source_url`
 (required: source, signal, state, county, and apn or address).
 
-## Setup
-1. Apply `supabase/migrations/*.sql` in order.
+## Run it locally (one command)
+
+```bash
+npm install
+npm run dev:local
+```
+
+That is the whole thing. It downloads a real PostgreSQL 18 the first time, starts it in `./.localdb`,
+applies every migration, seeds a book of demo leads, and starts the dashboard against it:
+
+**http://localhost:3000** — sign in with the password `lead-desk` (override with `DASHBOARD_PASSWORD`).
+
+No account, no Docker, no Supabase, no API keys. The database is the same engine you run in production
+(Postgres 18 with plpgsql, RLS and triggers), so what you see locally is what you get.
+
+The individual pieces, if you want them separately:
+
+```bash
+npm run db:local        # just the database; prints the DATABASE_URL to use
+npm run db:migrate      # apply the migrations to any Postgres (DATABASE_URL)
+npm run db:migrate -- --status
+npm run db:seed:demo    # fill a database with demo leads
+npm run dev             # the dashboard on its own
+```
+
+## Deploy to production
+
+1. Create a Postgres database (Supabase is the easiest). Apply the schema to it:
+   ```bash
+   DATABASE_URL="postgresql://..." npm run db:migrate
+   ```
+   This is safe to re-run — it keeps a `schema_migrations` ledger and skips what is already applied.
+   It creates the `anon` / `authenticated` / `service_role` roles first if they are missing, so it works
+   on a plain Postgres as well as on Supabase.
 2. Give the dashboard role a login (never commit this):
    `alter role hbh_dashboard with login password '<secret>';`
-3. Set the env vars from `.env.example` in Vercel (plus `CRON_SECRET` for scheduled feeds).
-4. `npm install && npm run build`.
+3. Set the env vars from `.env.example` in Vercel (plus `CRON_SECRET` for scheduled feeds):
+   `DATABASE_URL`, `DASHBOARD_PASSWORD`, `SESSION_SECRET`, `CRON_SECRET`.
+4. `npm run build` and deploy.
 
 The dashboard connects as `hbh_dashboard`, a least-privilege role with RLS policies — never the service-role key.
 Database connections use `prepare: false` and `max_pipeline: 0`; Supabase's transaction pooler hangs on pipelined queries.
 
 ## Development
-```
-npm run dev     # dashboard on :3000
-npm test        # database contract tests + collector unit tests
-npm run build   # production build
+```bash
+npm run dev:local      # database + dashboard together (the one command above)
+npm run dev            # dashboard on :3000
+npm test               # database contract tests + collector unit tests
+npm run build          # production build
 ```
 
 `npm test` needs no database and no Docker: it applies every migration to a real Postgres engine
