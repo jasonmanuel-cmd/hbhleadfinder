@@ -82,9 +82,25 @@ if (fresh && fs.readdirSync(DATA_DIR).length) {
   fs.rmSync(DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
-if (fresh) await pg.initialise();
-await pg.start();
-console.log(`Postgres ${fresh ? '18' : ''} is up on 127.0.0.1:${PORT}`);
+
+// A previous run may still have Postgres on the port. Reuse it rather than crashing
+// with a port conflict.
+let started = false;
+if (await portInUse(PORT)) {
+  if (await canConnect(URL)) {
+    console.log(`Reusing the Postgres already listening on ${PORT}.`);
+    started = true;
+  } else {
+    console.error(`Port ${PORT} is in use by something that is not this database.`);
+    console.error(`Stop it, or pick another port: LOCAL_PG_PORT=54330 npm run dev:local`);
+    process.exit(1);
+  }
+}
+if (!started) {
+  if (fresh) await pg.initialise();
+  await pg.start();
+  console.log(`Postgres ${fresh ? '18' : ''} is up on 127.0.0.1:${PORT}`);
+}
 
 // ---------------------------------------------------------------- schema + demo data
 const { default: postgres } = await import('postgres');
@@ -116,8 +132,31 @@ console.log('Press Ctrl-C to stop the database.');
 
 const stop = async () => {
   console.log('\nstopping postgres...');
-  try { await pg.stop(); } catch { /* already gone */ }
+  try { if (started) await pg.stop(); } catch { /* already gone */ }
   process.exit(0);
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
+
+async function portInUse(port) {
+  const net = await import('node:net');
+  return new Promise((resolve) => {
+    const s = net.connect({ port, host: '127.0.0.1' });
+    s.on('connect', () => { s.destroy(); resolve(true); });
+    s.on('error', () => resolve(false));
+    setTimeout(() => { s.destroy(); resolve(false); }, 1500);
+  });
+}
+
+async function canConnect(url) {
+  const { default: postgres } = await import('postgres');
+  const probe = postgres(url, { max: 1, connect_timeout: 3, ssl: false, prepare: false });
+  try {
+    await probe`select 1`;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await probe.end().catch(() => {});
+  }
+}
