@@ -1,13 +1,20 @@
 import { NextResponse } from 'next/server';
 import { COOKIE, sessionToken, safeEqual } from '@/lib/auth';
 
-export async function middleware(req) {
+export async function proxy(req) {
   const { pathname } = req.nextUrl;
   if (pathname.startsWith('/login')) return NextResponse.next();
   // cron endpoints authenticate themselves with CRON_SECRET
   if (pathname.startsWith('/api/cron/')) return NextResponse.next();
   if (!process.env.DASHBOARD_PASSWORD || !process.env.SESSION_SECRET) {
     return new NextResponse('Dashboard is not configured.', { status: 503 });
+  }
+  if (!process.env.DATABASE_URL) {
+    return new NextResponse(
+      'No DATABASE_URL is set. Run `npm run dev:local` for a local database, ' +
+      'or point DATABASE_URL at your Postgres and run `npm run db:migrate`.',
+      { status: 503 },
+    );
   }
   const cookie = req.cookies.get(COOKIE)?.value;
   if (cookie && safeEqual(cookie, await sessionToken())) return NextResponse.next();

@@ -5,10 +5,17 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "test:watch": "node --test --watch \"test/**/*.test.mjs\"",
+    "dev:local": "node scripts/dev-local.mjs",
+    "db:local": "node scripts/local-db.mjs",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:seed:demo": "node scripts/seed-demo.mjs",
+    "pull": "node scripts/pull.mjs",
+    "pull:check": "node scripts/pull.mjs --check"
   },
   "dependencies": {
-    "next": "^16.3.7",
     "next": "^16.3.8",
     "postgres": "3.4.9",
     "react": "19.3.0",
@@ -16,5 +23,9 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.10"
+  },
+  "type": "module"
 }

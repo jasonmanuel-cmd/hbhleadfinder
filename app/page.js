@@ -1,11 +1,12 @@
 import { sql } from '@/lib/db';
 import { Tier, Signals } from '@/components/ui';
 import { date, dateTime, daysUntil, label } from '@/lib/format';
+import { brokenFeeds, feedsNeverRun, demoDataCount } from '@/lib/feedHealth';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Today() {
-  const [[k], actions, auctions, followups, [{ f }]] = await Promise.all([
+  const [[k], actions, auctions, followups, [{ f }], broken, neverRun, demo] = await Promise.all([
     sql`select
           (select count(*) from lead_scores where lead_tier = 'A')::int as tier_a,
           (select count(*) from lead_scores where lead_tier = 'B')::int as tier_b,
@@ -28,6 +29,9 @@ export default async function Today() {
            and d.stage not in ('closed','lost','dead')
          order by d.next_follow_up_at limit 15`,
     sql`select funnel(90) as f`,
+    brokenFeeds(),
+    feedsNeverRun(),
+    demoDataCount(),
   ]);
   const steps = [['Filings', f.filings], ['Matched to a parcel', f.matched], ['Mailed', f.mailed], ['Any contact', f.touched],
     ['Talked', f.talked], ['Appointment', f.appointment], ['Contract', f.contract], ['Closed', f.closed]];
@@ -36,6 +40,38 @@ export default async function Today() {
     <>
       <h1>Today</h1>
       <p className="sub">Work Tier A first. Verify title, debt and authority before any offer.</p>
+
+      {broken.length > 0 && (
+        <div className="alert err">
+          <strong>The {broken.length === 1 ? 'feed is' : 'feeds are'} not running.</strong>{' '}
+          {broken.map((b) => (
+            <span key={b.source_id}>
+              {b.source_id} last failed {b.finished_at ? dateTime(b.finished_at) : ''} — {b.reason?.what}.{' '}
+              {b.reason?.why}{' '}
+            </span>
+          ))}
+          Everything below is the last data that came in, not today&rsquo;s.
+          <a href="/sources">See the feed</a> or{' '}
+          <a href="/add">import a CSV</a> to keep working.
+        </div>
+      )}
+      {broken.length === 0 && neverRun.length > 0 && (
+        <div className="alert warn">
+          <strong>No feed has run yet.</strong> The {neverRun.map((f) => f.id).join(', ')} source
+          {neverRun.length === 1 ? ' has' : 's have'} never been pulled, so this dashboard holds only
+          what you entered by hand.{' '}
+          <a href="/sources">Run the feed</a> or <a href="/add">import a CSV</a>.
+        </div>
+      )}
+      {demo.demo > 0 && (
+        <div className="alert warn">
+          <strong>{demo.demo} of the {demo.total} propert{demo.total === 1 ? 'y' : 'ies'} here are demo data</strong>
+          {' '}(seeded by <code>npm run db:seed:demo</code>) — made-up owners and addresses, for
+          practice.{' '}
+          {demo.real > 0 ? `${demo.real} are real.` : 'Nothing here is a real lead yet.'}{' '}
+          <a href="/sources">Clear the sample data</a>.
+        </div>
+      )}
 
       <div className="grid kpis">
         <Kpi v={k.tier_a} label="Tier A leads" />
@@ -80,6 +116,7 @@ export default async function Today() {
                       <a className="rowlink" href={`/leads/${a.property_id}`}>{a.address_line_1 || a.apn}</a>
                       <div className="muted small">{a.city}, {a.state} {a.zip}</div>
                       {a.equity_purchase_law_applies && <span className="badge flag small">Equity-purchase law</span>}
+                      {a.equity_provisional && <span className="chip">Equity provisional</span>}
                     </td>
                     <td><Signals list={a.signals} /></td>
                     <td className="num">{a.total_score}</td>

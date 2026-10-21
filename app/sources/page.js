@@ -2,20 +2,23 @@ import { sql } from '@/lib/db';
 import { label, dateTime } from '@/lib/format';
 import { Flash } from '@/components/ui';
 import { COLLECTORS } from '@/lib/ingest';
-import { pullNow, buildHistories, fillAddresses } from './actions';
+import { feedStatus, demoDataCount } from '@/lib/feedHealth';
+import { pullNow, buildHistories, fillAddresses, runEnrichmentNow, clearDemoData, importCountyPage } from './actions';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export default async function Sources({ searchParams }) {
   const sp = await searchParams;
-  const [perf, queue, juris, runs, [na]] = await Promise.all([
+  const [perf, queue, juris, runs, [na], feeds, demo] = await Promise.all([
     sql`select * from v_source_performance order by contracts desc, tier_ab desc, records_received desc`,
     sql`select * from v_queue_health`,
     sql`select j.state, j.county, j.active, s.foreclosure_type, s.equity_purchase_statute
           from jurisdictions j join state_rules s on s.state = j.state order by j.active desc, j.state, j.county`,
     sql`select * from source_runs order by started_at desc limit 10`,
     sql`select (select count(*) from v_needs_address)::int as addr, (select count(*) from tax_defaults)::int as tax`,
+    feedStatus(),
+    demoDataCount(),
   ]);
   const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
   return (
@@ -23,18 +26,62 @@ export default async function Sources({ searchParams }) {
       <h1>Sources</h1>
       <p className="sub">Judge sources by contracts, not record counts. A source with volume and no appointments gets cut.</p>
       <Flash sp={sp} />
+      {feeds.filter((f) => f.status === 'error').map((f) => (
+        <div className="alert err" key={f.source_id}>
+          <strong>{f.source_id} last failed{f.finished_at ? ` ${dateTime(f.finished_at)}` : ''}.</strong>{' '}
+          {f.reason?.what}. {f.reason?.why}{' '}
+          {f.error ? <span className="muted small">({f.error})</span> : null}
+        </div>
+      ))}
+      {feeds.length === 0 && (
+        <div className="alert warn">
+          <strong>No feed has ever run.</strong> The dashboard holds only what you entered by hand.{' '}
+          <a href="/add">Import a CSV</a> to get real leads in without the county site.
+        </div>
+      )}
+      {demo.demo > 0 && (
+        <div className="alert warn">
+          <strong>{demo.demo} of {demo.total} propert{demo.total === 1 ? 'y' : 'ies'} on this dashboard are demo data</strong>
+          {' '}— made-up owners and addresses seeded by <code>npm run db:seed:demo</code>, for practice.
+          They are marked, so they can be cleared in one click:{ ' '}
+          <form action={clearDemoData} style={{ display: 'inline' }}>
+            <button className="btn" type="submit">Clear the {demo.demo} demo propert{demo.demo === 1 ? 'y' : 'ies'}</button>
+          </form>
+        </div>
+      )}
       <section className="card" style={{ marginBottom: 16 }}>
         <h2>Automatic feeds</h2>
-        {Object.entries(COLLECTORS).map(([id, c]) => (
+        {Object.entries(COLLECTORS).map(([id, c]) => {
+          const last = feeds.find((f) => f.source_id === id);
+          return (
           <form key={id} action={pullNow} className="toolbar" style={{ marginBottom: 12 }}>
             <input type="hidden" name="source" value={id} />
             <div style={{ flex: 2 }}><strong>{c.label}</strong>
-              <div className="muted small">Runs daily at 8am Pacific · re-reads the last {c.lookbackDays} days so late-indexed filings are caught · duplicates skipped · builds each owner's recorded history</div></div>
+              {last ? (
+                last.status === 'ok'
+                  ? <div className="muted small">Last run {dateTime(last.finished_at || last.started_at)} · {last.fetched} filings · {last.inserted} new</div>
+                  : <div className="small" style={{ color: 'var(--danger)' }}>Last run failed {dateTime(last.finished_at || last.started_at)} — {last.reason?.what}</div>
+              ) : (
+                <div className="muted small">Never run</div>
+              )}
+              <div className="muted small">Runs daily at 8am Pacific (7am during standard time) · re-reads the last {c.lookbackDays} days so late-indexed filings are caught · duplicates skipped · builds each owner's recorded history</div></div>
             <div style={{ minWidth: 110 }}><label>Days back</label><input name="days" defaultValue={c.lookbackDays} inputMode="numeric" /></div>
             <div style={{ minWidth: 0 }}><button className="btn primary">Pull now</button>{' '}
               <button className="btn" formAction={buildHistories}>Build histories</button></div>
           </form>
-        ))}
+          );
+        })}
+        <form action={importCountyPage} className="toolbar" style={{ marginBottom: 12 }}>
+          <div style={{ flex: 2 }}><strong>Import a saved county results page</strong>
+            <div className="muted small">For when this server cannot reach the county site. Open the county's
+              search in your own browser, run the search, save the results page as HTML, and drop it here.
+              It goes through the same parser the live feed uses, so the data is the same data.</div></div>
+          <div style={{ minWidth: 200 }}>
+            <label htmlFor="county-page">Saved page (.html)</label>
+            <input id="county-page" name="file" type="file" accept=".html,.htm,text/html" required />
+          </div>
+          <div style={{ alignSelf: 'flex-end' }}><button className="btn primary">Import page</button></div>
+        </form>
         <form action={fillAddresses} className="toolbar" style={{ marginBottom: 12 }}>
           <div style={{ flex: 2 }}><strong>Street addresses from APN</strong>
             <div className="muted small">{na.addr} leads with a recorder or court signal have an APN but no street address or ZIP.
@@ -90,7 +137,22 @@ export default async function Sources({ searchParams }) {
               ))}</tbody>
             </table>
           )}
-          <p className="muted small">Jobs wait here until the enrichment workers (Regrid, valuation, contact) are connected.</p>
+          <p className="muted small">Jobs are worked by the enrichment worker (<code>GET /api/cron/enrichment</code>) once a provider is
+            configured — the free county assessor by default, or a paid provider via <code>ENRICHMENT_PROVIDER_URL</code>.
+            Without one, jobs stay queued and the score falls back to provisional equity from the recorded history.</p>
+          <form action={runEnrichmentNow} className="toolbar" style={{ marginTop: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label htmlFor="enrichment-types">Types</label>
+              <input id="enrichment-types" name="types" defaultValue="valuation,parcel" placeholder="valuation,parcel" />
+            </div>
+            <div style={{ minWidth: 90 }}>
+              <label htmlFor="enrichment-limit">Limit</label>
+              <input id="enrichment-limit" name="limit" type="number" min="1" max="50" defaultValue="10" />
+            </div>
+            <div style={{ alignSelf: 'flex-end' }}>
+              <button className="btn primary" type="submit">Work the queue</button>
+            </div>
+          </form>
         </section>
         <section className="card table-wrap">
           <h2>Jurisdictions</h2>
