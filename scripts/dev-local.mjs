@@ -84,5 +84,13 @@ if (!up) {
     DASHBOARD_PASSWORD: PASSWORD,
     SESSION_SECRET: process.env.SESSION_SECRET || 'local-dev-secret-not-for-production',
     CRON_SECRET: process.env.CRON_SECRET || 'local-cron-secret',
+    // shows the password on the login page, so it never has to be looked up
+    SHOW_LOGIN_HINT: '1',
+    // the hosted preview renders the app in an iframe on another origin, where the
+    // browser treats the session cookie as third-party and drops a SameSite=Lax one
+    COOKIE_SAMESITE: 'none',
+    // a proxy that rewrites the host would otherwise make Next reject the login
+    // action with "Invalid Server Actions request"
+    SERVER_ACTIONS_ALLOWED_ORIGINS: '*.e2b.app',
   });
 }
