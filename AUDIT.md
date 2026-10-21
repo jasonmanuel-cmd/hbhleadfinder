@@ -495,3 +495,10 @@ A  test/enrichment.test.mjs           13 worker + provisional-equity tests
 
 Tests went from 36 to **49**, all passing. `npm run build` is clean on Next 16.4.2 and
 `npm audit --audit-level=high` reports 0 vulnerabilities.
+
+> **CI has never actually run on this repository.** Every workflow run — including the ones on this
+> branch — fails in four seconds with *"The job was not started because your account is locked due
+> to a billing issue."* The jobs never start, so the gates are unverified on GitHub's side and only
+> the local `npm ci → npm test → npm run build → npm audit` chain has actually been exercised. This
+> is a GitHub Actions billing problem on the account, not a code problem; it needs resolving before
+> the CI setup can be called proven.
