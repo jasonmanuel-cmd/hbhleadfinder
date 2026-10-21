@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { freshDb, one, all, pgliteClient } from './helpers/db.mjs';
 
-const { explainFeedError, feedStatus, brokenFeeds, feedsNeverRun } = await import('../lib/feedHealth.js');
+const { explainFeedError, feedStatus, brokenFeeds, feedsNeverRun, demoDataCount } = await import('../lib/feedHealth.js');
 
 // ---------------------------------------------------------------------------------------------
 // Turning an error into words
@@ -106,4 +106,28 @@ test('a feed that has never run is said out loud', async () => {
                  values ('kern_recorder','cron','ok', now())`);
   const after = await feedsNeverRun({ db: pgliteClient(db) });
   assert.equal(after.filter((f) => f.id === 'kern_recorder').length, 0);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Saying out loud that the data on screen is a sample
+// ---------------------------------------------------------------------------------------------
+
+test('demo data is counted separately from real leads', async () => {
+  const db = await freshDb();
+  const demo = await one(db, `insert into properties (state, county, address_line_1, city, apn, data_confidence)
+    values ('CA','Kern','1 DEMO ST','Bakersfield','dh-1','demo') returning id`);
+  await one(db, `insert into properties (state, county, address_line_1, city, apn, data_confidence)
+                 values ('CA','Kern','2 REAL ST','Bakersfield','dh-2','manual')`);
+
+  const d = await demoDataCount({ db: pgliteClient(db) });
+  assert.equal(d.demo, 1);
+  assert.equal(d.total, 2);
+  assert.equal(d.real, 1);
+});
+
+test('a database with no demo data says so plainly', async () => {
+  const db = await freshDb();
+  const d = await demoDataCount({ db: pgliteClient(db) });
+  assert.equal(d.demo, 0);
+  assert.equal(d.real, d.total);
 });

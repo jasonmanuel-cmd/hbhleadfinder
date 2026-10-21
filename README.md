@@ -132,6 +132,17 @@ today's. A feed that goes quiet is the failure mode nobody notices.
 network), and it deduplicates on the source and record id, so re-importing the same file is
 safe. Column list is under *Dashboard* above.
 
+## Demo data is labelled as demo data
+
+`npm run db:seed:demo` seeds a book of practice business — seven Kern leads with made-up owners
+and addresses, six letters, a follow-up history. Every seeded property is marked
+`data_confidence = 'demo'`, and the dashboard **says so**: a banner on Today and on Sources tells
+you how many of the properties on screen are sample data, and a **Clear the demo properties**
+button removes them and everything hanging off them (scores, events, letters, touches).
+
+It only ever deletes rows marked `demo`, so on a database with real leads it is a no-op. Nobody
+should ever mail a letter to a made-up owner by accident.
+
 ## Dashboard
 | Page | Purpose |
 |---|---|

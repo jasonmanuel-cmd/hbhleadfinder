@@ -70,6 +70,16 @@ try {
   }
   await sql`select process_pending_intake(500)`;
 
+  // Mark every seeded property as demo, not just the ones with underwriting.
+  // The dashboard uses this to say out loud that what you are looking at is a
+  // sample, and to offer a way to clear it. A marker that only some of the demo
+  // rows carry is worse than none.
+  await sql`
+    update properties p set data_confidence = 'demo'
+     where p.id in (
+       select de.property_id from distress_events de
+        where de.document_number in ${sql(docs)} and de.property_id is not null)`;
+
   for (const f of FILINGS) {
     const u = UNDERWRITING[f.doc];
     if (!u) continue;

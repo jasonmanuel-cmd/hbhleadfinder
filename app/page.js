@@ -1,12 +1,12 @@
 import { sql } from '@/lib/db';
 import { Tier, Signals } from '@/components/ui';
 import { date, dateTime, daysUntil, label } from '@/lib/format';
-import { brokenFeeds, feedsNeverRun } from '@/lib/feedHealth';
+import { brokenFeeds, feedsNeverRun, demoDataCount } from '@/lib/feedHealth';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Today() {
-  const [[k], actions, auctions, followups, [{ f }], broken, neverRun] = await Promise.all([
+  const [[k], actions, auctions, followups, [{ f }], broken, neverRun, demo] = await Promise.all([
     sql`select
           (select count(*) from lead_scores where lead_tier = 'A')::int as tier_a,
           (select count(*) from lead_scores where lead_tier = 'B')::int as tier_b,
@@ -31,6 +31,7 @@ export default async function Today() {
     sql`select funnel(90) as f`,
     brokenFeeds(),
     feedsNeverRun(),
+    demoDataCount(),
   ]);
   const steps = [['Filings', f.filings], ['Matched to a parcel', f.matched], ['Mailed', f.mailed], ['Any contact', f.touched],
     ['Talked', f.talked], ['Appointment', f.appointment], ['Contract', f.contract], ['Closed', f.closed]];
@@ -60,6 +61,15 @@ export default async function Today() {
           {neverRun.length === 1 ? ' has' : 's have'} never been pulled, so this dashboard holds only
           what you entered by hand.{' '}
           <a href="/sources">Run the feed</a> or <a href="/add">import a CSV</a>.
+        </div>
+      )}
+      {demo.demo > 0 && (
+        <div className="alert warn">
+          <strong>{demo.demo} of the {demo.total} propert{demo.total === 1 ? 'y' : 'ies'} here are demo data</strong>
+          {' '}(seeded by <code>npm run db:seed:demo</code>) — made-up owners and addresses, for
+          practice.{' '}
+          {demo.real > 0 ? `${demo.real} are real.` : 'Nothing here is a real lead yet.'}{' '}
+          <a href="/sources">Clear the sample data</a>.
         </div>
       )}
 

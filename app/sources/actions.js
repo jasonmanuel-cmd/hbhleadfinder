@@ -1,5 +1,6 @@
 'use server';
 import { redirect } from 'next/navigation';
+import { sql, dbError } from '@/lib/db';
 import { runCollector, enrichDossiers, COLLECTORS } from '@/lib/ingest';
 import { tidyQueue, fillMissingAddresses } from '@/lib/parcelFill';
 import { runEnrichment } from '@/lib/enrichment';
@@ -49,5 +50,21 @@ export async function runEnrichmentNow(fd) {
     msg = `Worked ${r.claimed} enrichment job(s) · ${r.completed} completed · ${r.skipped} skipped · ${r.failed} failed · ${r.released} stale lock(s) released`
       + (r.failed ? ' — failed jobs back off and retry on their own' : '');
   } catch (e) { err = e.message; }
+  redirect(`/sources?${err ? 'error' : 'ok'}=${encodeURIComponent(err || msg)}`);
+}
+
+export async function clearDemoData() {
+  let msg = null, err = null;
+  try {
+    // Only rows the demo seed marked. A real database has none, so this is a no-op
+    // there -- it can never touch a real lead.
+    const rows = await sql`select id from properties where data_confidence = 'demo'`;
+    if (!rows.length) {
+      msg = 'No demo data found — nothing to clear.';
+    } else {
+      for (const r of rows) await sql`delete from properties where id = ${r.id}`;
+      msg = `Cleared ${rows.length} demo propert${rows.length === 1 ? 'y' : 'ies'} and everything hanging off them (scores, events, letters, touches).`;
+    }
+  } catch (e) { err = dbError(e); }
   redirect(`/sources?${err ? 'error' : 'ok'}=${encodeURIComponent(err || msg)}`);
 }

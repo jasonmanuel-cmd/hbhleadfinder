@@ -2,15 +2,15 @@ import { sql } from '@/lib/db';
 import { label, dateTime } from '@/lib/format';
 import { Flash } from '@/components/ui';
 import { COLLECTORS } from '@/lib/ingest';
-import { feedStatus } from '@/lib/feedHealth';
-import { pullNow, buildHistories, fillAddresses, runEnrichmentNow } from './actions';
+import { feedStatus, demoDataCount } from '@/lib/feedHealth';
+import { pullNow, buildHistories, fillAddresses, runEnrichmentNow, clearDemoData } from './actions';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export default async function Sources({ searchParams }) {
   const sp = await searchParams;
-  const [perf, queue, juris, runs, [na], feeds] = await Promise.all([
+  const [perf, queue, juris, runs, [na], feeds, demo] = await Promise.all([
     sql`select * from v_source_performance order by contracts desc, tier_ab desc, records_received desc`,
     sql`select * from v_queue_health`,
     sql`select j.state, j.county, j.active, s.foreclosure_type, s.equity_purchase_statute
@@ -18,6 +18,7 @@ export default async function Sources({ searchParams }) {
     sql`select * from source_runs order by started_at desc limit 10`,
     sql`select (select count(*) from v_needs_address)::int as addr, (select count(*) from tax_defaults)::int as tax`,
     feedStatus(),
+    demoDataCount(),
   ]);
   const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
   return (
@@ -36,6 +37,16 @@ export default async function Sources({ searchParams }) {
         <div className="alert warn">
           <strong>No feed has ever run.</strong> The dashboard holds only what you entered by hand.{' '}
           <a href="/add">Import a CSV</a> to get real leads in without the county site.
+        </div>
+      )}
+      {demo.demo > 0 && (
+        <div className="alert warn">
+          <strong>{demo.demo} of {demo.total} propert{demo.total === 1 ? 'y' : 'ies'} on this dashboard are demo data</strong>
+          {' '}— made-up owners and addresses seeded by <code>npm run db:seed:demo</code>, for practice.
+          They are marked, so they can be cleared in one click:{ ' '}
+          <form action={clearDemoData} style={{ display: 'inline' }}>
+            <button className="btn" type="submit">Clear the {demo.demo} demo propert{demo.demo === 1 ? 'y' : 'ies'}</button>
+          </form>
         </div>
       )}
       <section className="card" style={{ marginBottom: 16 }}>
