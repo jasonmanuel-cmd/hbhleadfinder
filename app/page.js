@@ -80,6 +80,7 @@ export default async function Today() {
                       <a className="rowlink" href={`/leads/${a.property_id}`}>{a.address_line_1 || a.apn}</a>
                       <div className="muted small">{a.city}, {a.state} {a.zip}</div>
                       {a.equity_purchase_law_applies && <span className="badge flag small">Equity-purchase law</span>}
+                      {a.equity_provisional && <span className="chip">Equity provisional</span>}
                     </td>
                     <td><Signals list={a.signals} /></td>
                     <td className="num">{a.total_score}</td>

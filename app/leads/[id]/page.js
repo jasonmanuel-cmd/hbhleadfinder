@@ -83,13 +83,18 @@ export default async function LeadPage({ params, searchParams }) {
               <>
                 <ScoreRow k="Urgency" v={score.urgency_score} max={40} />
                 <ScoreRow k="Equity" v={score.equity_score} max={25} />
+                {score.equity_provisional && <p className="muted small" style={{ marginTop: -6 }}>
+                  Provisional — counted from the recorded owner history, not a valuation.
+                </p>}
                 <ScoreRow k="Condition" v={score.condition_score} max={10} />
                 <ScoreRow k="Authority" v={score.authority_score} max={10} />
                 <ScoreRow k="Exit" v={score.exit_score} max={15} />
                 {score.risk_score > 0 && <ScoreRow k="Risk" v={-score.risk_score} max={40} neg />}
                 <p className="muted small" style={{ marginBottom: 0 }}>
                   Equity: {typeof r.equity_pct === 'number' ? `${Math.round(r.equity_pct * 100)}%`
-                    : `unknown — add value + loan balance${r.equity_hint && r.equity_hint !== 'unknown' ? ` (recorded history suggests ${r.equity_hint})` : ''}`}
+                    : r.equity_source === 'recorded_history'
+                      ? `provisional (${r.equity_hint}) — add value + loan balance to confirm`
+                      : `unknown — add value + loan balance${r.equity_hint && r.equity_hint !== 'unknown' ? ` (recorded history suggests ${r.equity_hint})` : ''}`}
                   {' · '}Foreclosure active: {r.foreclosure_active ? 'yes' : 'no'}
                   {r.risk_no_cash_margin && ' · No cash margin at 70% rule'}
                   {r.risk_multi_owner_no_decision_maker && ' · Multiple owners, no decision-maker'}

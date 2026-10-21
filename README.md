@@ -17,6 +17,8 @@ Built multi-state from day one: state law and county sources live in data (`stat
 3. `distress_events` keeps every signal's history; `recalculate_lead_score()` writes a 0–100 score and tier:
    Urgency 40 · Equity 25 · Condition 10 · Authority 10 · Exit 15 · minus Risk.
 4. Paid enrichment is gated: valuation only for real distress, contact data only for Tier A/B.
+5. Enrichment is queued, not assumed: a valuation arrives from a provider, and until it does the score uses the
+   recorded owner history as a **provisional** equity.
 
 ## Compliance enforced in the database
 - **Equity-purchase statutes** (e.g. Cal. Civ. Code §1695): owner-occupied 1–4 unit homes in active
@@ -52,6 +54,59 @@ solar UCC filings, unreleased tax liens/judgments, recorded deaths, and transfer
 It yields an equity hint (`high` / `moderate` / `thin` / `unverified` for common names), a 0–100 priority that orders the
 Find-the-parcel queue, and feeds the lead score (provisional equity, lien/solar risk, "already gone" kill switch).
 Screening only — names collide; confirm with a preliminary title report.
+
+### Provisional equity (so the feed can fill Tier A on its own)
+A property with no valuation and no loan balance scored **0 for equity**, and equity is worth 25 points — so a
+lead straight off the recorder feed could never reach Tier A (≥70). It topped out at 50, in Tier B.
+The recorded owner history already says how much equity a property probably has, so the scorer now reads it:
+a `high` hint counts 20 points, a `moderate` hint 10 — the bottom of the band the hint implies, because a
+recorded history is weaker evidence than a valuation.
+
+- A **truncated** dossier is not counted: it was cut short because the county had more documents than we read.
+- The score records `equity_source` = `underwritten` | `recorded_history` | `unknown`, and `lead_scores.equity_provisional`.
+  The dashboard marks a provisional equity as provisional, so a guess is never presented as a valuation.
+- A real valuation replaces it: once value and balance arrive, the equity is underwritten and the provisional flag clears.
+
+| Lead | Before | After |
+|---|---|---|
+| Feed lead, strong recorded history | 50 · Tier B | **70 · Tier A** |
+| Feed lead, moderate recorded history | 50 · Tier B | 60 · Tier B |
+| Feed lead, no history | 50 · Tier B | 50 · Tier B |
+| Feed lead, truncated history | 50 · Tier B | 50 · Tier B |
+| Underwritten (400k value / 200k balance) | 75 · Tier A | 75 · Tier A |
+
+## Enrichment worker
+The database has always enqueued enrichment jobs (one per new lead) and had the whole queue lifecycle in SQL —
+claim, back off, fail, release stale locks. **Nothing consumed them.** The jobs piled up, one per lead, and the
+score never got the value and balance it needs.
+
+`lib/enrichment/index.js` is that consumer. It claims jobs type by type, hands each one to a provider, writes
+only the columns on its allow-list, and lets the database re-score the property. Failures back off
+(15m → 2h → 1d, four attempts) instead of disappearing; a job nobody can service yet is **skipped**, not failed.
+
+```bash
+# the daily run (same CRON_SECRET as the other feeds)
+curl -H "Authorization: Bearer $CRON_SECRET" "https://your-app/api/cron/enrichment?types=valuation,parcel&limit=10"
+```
+
+There is also a **Work the queue** button on the Sources page that runs it on demand.
+
+| Provider | Cost | What it fills |
+|---|---|---|
+| `assessor` | free | Assessed value, sqft, year built, units, beds/baths — from the county's own parcel layer |
+| `webhook` | paid | Whatever your vendor returns — the loan balance, the contact data, the title facts |
+
+The paid adapter posts the job to `ENRICHMENT_PROVIDER_URL` with `Authorization: Bearer $ENRICHMENT_PROVIDER_KEY`
+and reads the JSON reply; a reply of `{"skipped": "..."}` means "not now". The `attom_id` / `regrid_id` columns
+are already on `properties` for the vendors that use them.
+
+**The assessor provider never turns an assessed value into a market value.** In California the assessed value is
+the Proposition 13 figure — a floor, not the market — and using it as one would quietly sink good properties in the
+ranking. Set `MARKET_VALUE_FROM_ASSESSED=1.15` if you want that approximation; it is recorded as an estimate
+(`data_confidence = 'assessor_estimate'`).
+
+The free county can give parcel facts but **not money**: the grantor/grantee index carries document numbers, dates
+and names, never dollar amounts. The loan balance — the other half of equity — needs a paid provider.
 
 ### Timeline and follow-ups
 `estimated_sale_date()` gives the earliest likely sale: scheduled auction → NTS + 21 days → NOD + 111 days.
@@ -127,7 +182,8 @@ npm run build          # production build
 (PGlite — Postgres compiled to WASM) and then checks the rules the business depends on — matching,
 scoring, the equity-purchaser compliance guard, do-not-contact enforcement, and the letter queue.
 `test/db.test.mjs` covers the database; `test/collectors.test.mjs` covers the county HTML parser,
-the name formatter and the CSV reader.
+the name formatter and the CSV reader; `test/enrichment.test.mjs` covers the enrichment worker and
+the provisional-equity rule.
 
 Auth lives in `proxy.js` (Next 16's name for the old `middleware.js`). Every page and API route
 requires the session cookie; `/api/cron/*` authenticates with `CRON_SECRET` instead.

@@ -1,6 +1,8 @@
 # Audit — Harbison Buys Homes · Lead Finder
 
 **Date:** 2026-10-18 · **Commit audited:** `95a23d9` · **Branch:** `arena/c76a9d9f-hbhleadfinder`
+**Updated:** 2026-10-21 — provisional equity + the enrichment worker (see *Update — the two changes
+that turn it into a lead-scoring tool*).
 
 ---
 
@@ -59,6 +61,134 @@ The Vercel project `hbh-lead-desk` is created and linked to the repo, with `SESS
 `CRON_SECRET` and `DASHBOARD_PASSWORD` set and the build verified green. It needs a hosted
 Postgres (`DATABASE_URL`) before it can show any data; that is the one thing I could not do without
 your Supabase credentials. The deployment is otherwise ready.
+
+---
+
+## Update — the two changes that turn it into a lead-scoring tool
+
+The audit's headline gap was that the queue had no worker and the score could never see a
+dollar figure. Both are now closed. This section is the changelog for that pass; the rest of the
+document is unchanged and still describes what is left.
+
+### 1. Provisional equity — the feed can finally fill Tier A
+
+**The problem.** Equity is worth 25 of the 100 points. It is computed from
+`properties.estimated_market_value` and `properties.estimated_loan_balance`, and the *only* thing
+that ever wrote them was a human underwriting the lead by hand on the lead page. So every lead that
+arrived from the recorder feed scored **0 for equity and 0 for exit** — 26 points that no automated
+path could ever reach. A feed lead topped out at **50, in Tier B**. Tier A (≥70) was, in practice,
+reachable only by hand. A ranking you cannot fill from the source is not a ranking.
+
+**The evidence was already in the database and simply not being read.** `lib/collectors/kernHistory.js`
+builds an owner-history dossier for every filing — loans vs. reconveyances, modifications, prior
+default episodes, solar filings, liens, deaths, transfers — and reduces it to an equity hint of
+`high` / `moderate` / `thin` / `unverified`. That hint was stored in `borrower_dossiers.signals`,
+shown on the lead page, and read by **nothing that affected the score**.
+
+**The change** (`supabase/migrations/010_provisional_equity.sql`):
+
+| Hint in the recorded history | Equity points |
+|---|---|
+| `high` | 20 |
+| `moderate` | 10 |
+| `thin`, `unverified`, none | 0 |
+
+Three deliberate choices:
+
+- **The bottom of the band, not the middle.** A `high` hint maps onto the score's own `≥35%` band,
+  which is worth 20; a `moderate` hint onto the `≥20%` band, worth 10. Recorded history is weaker
+  evidence than a valuation, so it takes the bottom of the band it implies. (The previous draft
+  used 12 and 6 — at 12 a feed-only lead topped out at 66 and Tier A still could never fill.)
+- **A truncated dossier counts for nothing.** The dossier is cut short when the county's index holds
+  more documents than we read, so it is not the whole story and must not push a lead up the list.
+  The hint is read with a separate query that excludes `truncated` rows; the rest of the dossier
+  (prior defaults, solar, liens, "already transferred") still reads the row as before.
+- **A guess is labelled as a guess.** `lead_scores.equity_provisional` is set, and
+  `score_reasoning.equity_source` is one of `underwritten` / `recorded_history` / `unknown`. The
+  dashboard shows an "Equity provisional" marker on the lead and in the action list, and the lead
+  page says so in words. The moment a real valuation arrives the equity is underwritten and the
+  provisional flag clears.
+
+**Verified on a live Postgres** (not just in a unit test):
+
+| Lead | Before | After |
+|---|---|---|
+| Feed lead, strong recorded history | 50 · Tier B | **70 · Tier A** |
+| Feed lead, moderate recorded history | 50 · Tier B | 60 · Tier B |
+| Feed lead, thin / unverified history | 50 · Tier B | 50 · Tier B |
+| Feed lead, truncated history | 50 · Tier B | 50 · Tier B |
+| Underwritten (400k value / 200k balance) | 75 · Tier A | 75 · Tier A |
+
+> **One thing I nearly shipped wrong, and the tests caught.** Migration 010 was first generated from
+> the scorer in `002_functions.sql`. But `007_dossiers_signals_timeline.sql` *also* redefines
+> `recalculate_lead_score` — version 3, with the imminent-sale urgency bonus and the dossier
+> `prior_defaults` bonus. Applying my migration would have silently **downgraded the live scorer**,
+> and the existing test "the score reflects urgency, equity and the 70% rule" failed (urgency 35,
+> expected 40). Migration 010 is now generated from the 007 function, so v3 behaviour is preserved and
+> the provisional equity is added on top. `rule_version` is now `v4`.
+
+### 2. The enrichment worker — the queue finally has a consumer
+
+`enrichment_jobs` had a complete lifecycle in SQL and **nothing called it**. The local database alone
+was sitting on **16 queued jobs** (2 contact, 7 parcel, 7 valuation) that no process would ever touch.
+
+**`lib/enrichment/index.js`** is that consumer. `runEnrichment()` releases stale locks, claims jobs
+type by type, picks a provider, writes **only allow-listed columns** back onto the property, and
+calls `finish_enrichment_job` — which re-scores the lead. Failures back off (15m → 2h → 1d, four
+attempts) instead of disappearing. A job nobody can service yet is *skipped*, not failed, so it does
+not burn its attempts on a condition that will not change.
+
+| Provider | Cost | Fills |
+|---|---|---|
+| `assessor` | free | Assessed value, sqft, year built, units, beds/baths — from the county's own parcel layer (`kernParcelFacts()` in `lib/parcels.js`) |
+| `webhook` | paid | Whatever the vendor returns — loan balance, contact data, title facts. `ENRICHMENT_PROVIDER_URL` + `ENRICHMENT_PROVIDER_KEY` (Bearer) |
+
+**The assessor provider never turns an assessed value into a market value.** In California the
+assessed value is the Proposition 13 figure — the purchase price plus 2% a year — a floor, not the
+market. Using it as the market value would understate every lead's equity and quietly sink good
+properties in the ranking. It is opt-in (`MARKET_VALUE_FROM_ASSESSED`), and when used it is recorded
+as an estimate (`data_confidence = 'assessor_estimate'`), never as a fact. The county renames its
+fields between roll years, so the provider asks for `outFields=*` and picks fields **by alias** — a
+restructured layer yields nulls, not wrong numbers.
+
+**Where the money is and is not.** The county's grantor/grantee index returns document number, date
+and names — **no dollar amounts at all**. So the free path can never produce a loan balance, and
+equity cannot be fully underwritten without a paid provider. That is a real, external limit, not a
+gap in the code: the worker's provider interface is the seam a paid vendor plugs into, and the
+`attom_id` / `regrid_id` columns already exist for the vendors that use them.
+
+**Two real bugs the live run exposed** (neither showed up in the unit tests, because the tests
+injected their own provider):
+
+- **`claim_enrichment_jobs` did not return `enrichment_type`.** The worker asked the claimed row
+  which type it was in order to choose a provider, got null, and skipped *every* job with "No
+  provider is configured" — while the provider sat right there in the table. The live run said
+  `{"claimed":10,"completed":0,"skipped":10}`, which is what exposed it. Fixed in both places: the
+  function now returns the type (migration 011), and the worker no longer depends on the column —
+  it uses the type it asked for.
+- **The dashboard role could not work the queue at all.** `claim_enrichment_jobs`,
+  `finish_enrichment_job` and `release_stale_enrichment_jobs` were granted to `service_role` only.
+  The dashboard connects as `hbh_dashboard`, so in production the worker would have been refused at
+  the first claim — the local run worked only because the local `DATABASE_URL` is the superuser.
+  Migration 011 grants the queue functions to `hbh_dashboard` as well, and I verified the whole
+  claim → finish → release cycle as that role.
+
+**Also in this pass:**
+
+- `GET /api/cron/enrichment` (Bearer `CRON_SECRET`, `types` and `limit` query params) and a daily
+  entry in `vercel.json` at `30 15 * * *`.
+- A **Work the queue** button on the Sources page, so it can be run on demand.
+- The Sources page copy said *"Runs daily at 8am Pacific"*. The cron is `0 15 * * *` UTC, which is
+  8am during Pacific daylight time and 7am during standard time — the copy now says so.
+
+### What this pass did not do
+
+- It did not make the county's live sites reachable. `recorderonline.co.kern.ca.us` and
+  `maps.kerncounty.com` are unreachable from this sandbox, so the **live scraper and the live
+  assessor call remain unverified** — the top open risk, unchanged.
+- It did not add user accounts. `created_by` is still hard-coded to `'dashboard'` / `'letters'` /
+  `'manual'`.
+- It did not add a second market, and it did not add failure alerting on `source_runs`.
 
 ---
 
@@ -187,7 +317,13 @@ statute", that is the most consequential gap in the repo.
 
 ## What is still missing (the real remaining work)
 
-### 1. The enrichment workers do not exist — the biggest gap
+### 1. ~~The enrichment workers do not exist — the biggest gap~~ **CLOSED**
+> **Now shipped.** `lib/enrichment/index.js` + `lib/enrichment/providers/{assessor,webhook}.js` +
+> `GET /api/cron/enrichment` + a "Work the queue" button on the Sources page. See
+> *Update — the two changes that turn it into a lead-scoring tool* above. What is left is only the
+> paid vendor: the free county gives parcel facts but no dollar amounts.
+
+The original finding, for the record:
 `enrichment_jobs` is a full queue with a complete lifecycle in SQL
 (`claim_enrichment_jobs` → `finish_enrichment_job` → `release_stale_enrichment_jobs`, with
 exponential backoff, `skip locked` claiming and attempt limits). **Nothing calls any of it.** The
@@ -245,9 +381,10 @@ break looks identical to "a quiet week at the recorder."
   needs_match / status / error), and the Sources page shows the last 10 — but nothing tells you when
   the feed stops working. A failed cron is invisible until someone notices the pipeline is empty.
 - **Cron schedule is off by an hour half the year.** `vercel.json` says `"0 15 * * *"` = 15:00 UTC
-  = **07:00 Pacific in winter, 08:00 Pacific in summer**. The README and the Sources page both
-  claim "8am Pacific". Either move to `0 16 * * *` and accept a summer mismatch, or schedule the
-  pull at a time that doesn't matter and describe it accurately.
+  = **07:00 Pacific in winter, 08:00 Pacific in summer**. The README already qualified this
+  ("8am Pacific / 7am during Pacific standard time"); the Sources page did not, and now says
+  "8am Pacific (7am during standard time)". Either move to `0 16 * * *` and accept a summer
+  mismatch, or schedule the pull at a time that doesn't matter and describe it accurately.
 - **The cron is unpaginated/untimed against the county.** `maxDuration = 300` on the route, but the
   collector walks up to 60 pages per document class with a 300 ms politeness delay and a 20 s
   per-request timeout. On a bad day this can overrun the function budget mid-run. `source_runs` will
@@ -334,3 +471,27 @@ A  test/db.test.mjs                   15 database contract tests
 A  test/collectors.test.mjs           16 collector/parser unit tests
 A  AUDIT.md                           this document
 ```
+
+### The improvement pass (`16af12a` → this branch)
+
+```
+M  app/page.js                        "Equity provisional" marker on the action list
+M  app/leads/[id]/page.js             says the equity is provisional, in words
+M  app/sources/page.js                "Work the queue" button; honest cron + queue copy
+M  app/sources/actions.js             runEnrichmentNow()
+M  lib/parcels.js                     kernParcelFacts() — the assessor layer's facts
+M  vercel.json                        + the daily enrichment cron
+M  README.md                          provisional equity + enrichment worker sections
+A  lib/enrichment/index.js            the worker: claim → provider → write → re-score
+A  lib/enrichment/providers/assessor.js   free county-assessor facts (never a market value)
+A  lib/enrichment/providers/webhook.js   generic paid-provider adapter
+A  app/api/cron/enrichment/route.js   GET with Bearer $CRON_SECRET
+A  supabase/migrations/010_provisional_equity.sql   provisional equity, built on the v3 scorer
+A  supabase/migrations/011_enrichment_queue_role.sql  the claimed job returns its type; the
+                                        dashboard role gets the queue functions
+A  test/helpers/db.mjs                shared PGlite harness + a postgres.js-shaped client
+A  test/enrichment.test.mjs           13 worker + provisional-equity tests
+```
+
+Tests went from 36 to **49**, all passing. `npm run build` is clean on Next 16.4.2 and
+`npm audit --audit-level=high` reports 0 vulnerabilities.

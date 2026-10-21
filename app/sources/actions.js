@@ -2,6 +2,7 @@
 import { redirect } from 'next/navigation';
 import { runCollector, enrichDossiers, COLLECTORS } from '@/lib/ingest';
 import { tidyQueue, fillMissingAddresses } from '@/lib/parcelFill';
+import { runEnrichment } from '@/lib/enrichment';
 
 export async function pullNow(fd) {
   const source = String(fd.get('source') || '');
@@ -32,6 +33,19 @@ export async function fillAddresses() {
   try {
     const r = await fillMissingAddresses({ limit: 200, deadline: Date.now() + 240000 });
     msg = `Filled ${r.filled} street addresses from the county parcel map · ${r.none} parcels have no street address (land) · ${r.remaining} still to do${r.failed ? ` · ${r.failed} lookups failed` : ''}`;
+  } catch (e) { err = e.message; }
+  redirect(`/sources?${err ? 'error' : 'ok'}=${encodeURIComponent(err || msg)}`);
+}
+
+export async function runEnrichmentNow(fd) {
+  const types = String(fd.get('types') || 'valuation,parcel')
+    .split(',').map((t) => t.trim()).filter(Boolean).slice(0, 6);
+  const limit = Math.min(50, Math.max(1, Number(fd.get('limit')) || 10));
+  let msg = null, err = null;
+  try {
+    const r = await runEnrichment({ types, limit, deadline: Date.now() + 230000 });
+    msg = `Worked ${r.claimed} enrichment job(s) · ${r.completed} completed · ${r.skipped} skipped · ${r.failed} failed · ${r.released} stale lock(s) released`
+      + (r.failed ? ' — failed jobs back off and retry on their own' : '');
   } catch (e) { err = e.message; }
   redirect(`/sources?${err ? 'error' : 'ok'}=${encodeURIComponent(err || msg)}`);
 }

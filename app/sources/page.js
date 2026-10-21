@@ -2,7 +2,7 @@ import { sql } from '@/lib/db';
 import { label, dateTime } from '@/lib/format';
 import { Flash } from '@/components/ui';
 import { COLLECTORS } from '@/lib/ingest';
-import { pullNow, buildHistories, fillAddresses } from './actions';
+import { pullNow, buildHistories, fillAddresses, runEnrichmentNow } from './actions';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -29,7 +29,7 @@ export default async function Sources({ searchParams }) {
           <form key={id} action={pullNow} className="toolbar" style={{ marginBottom: 12 }}>
             <input type="hidden" name="source" value={id} />
             <div style={{ flex: 2 }}><strong>{c.label}</strong>
-              <div className="muted small">Runs daily at 8am Pacific · re-reads the last {c.lookbackDays} days so late-indexed filings are caught · duplicates skipped · builds each owner's recorded history</div></div>
+              <div className="muted small">Runs daily at 8am Pacific (7am during standard time) · re-reads the last {c.lookbackDays} days so late-indexed filings are caught · duplicates skipped · builds each owner's recorded history</div></div>
             <div style={{ minWidth: 110 }}><label>Days back</label><input name="days" defaultValue={c.lookbackDays} inputMode="numeric" /></div>
             <div style={{ minWidth: 0 }}><button className="btn primary">Pull now</button>{' '}
               <button className="btn" formAction={buildHistories}>Build histories</button></div>
@@ -90,7 +90,22 @@ export default async function Sources({ searchParams }) {
               ))}</tbody>
             </table>
           )}
-          <p className="muted small">Jobs wait here until the enrichment workers (Regrid, valuation, contact) are connected.</p>
+          <p className="muted small">Jobs are worked by the enrichment worker (<code>GET /api/cron/enrichment</code>) once a provider is
+            configured — the free county assessor by default, or a paid provider via <code>ENRICHMENT_PROVIDER_URL</code>.
+            Without one, jobs stay queued and the score falls back to provisional equity from the recorded history.</p>
+          <form action={runEnrichmentNow} className="toolbar" style={{ marginTop: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label htmlFor="enrichment-types">Types</label>
+              <input id="enrichment-types" name="types" defaultValue="valuation,parcel" placeholder="valuation,parcel" />
+            </div>
+            <div style={{ minWidth: 90 }}>
+              <label htmlFor="enrichment-limit">Limit</label>
+              <input id="enrichment-limit" name="limit" type="number" min="1" max="50" defaultValue="10" />
+            </div>
+            <div style={{ alignSelf: 'flex-end' }}>
+              <button className="btn primary" type="submit">Work the queue</button>
+            </div>
+          </form>
         </section>
         <section className="card table-wrap">
           <h2>Jurisdictions</h2>
