@@ -377,9 +377,13 @@ that the run's `fetched` count is not zero for a weekday; alert if it is. Right 
 break looks identical to "a quiet week at the recorder."
 
 ### 4. Operational hardening
-- **No alerting.** `source_runs` records every pull (fetched / inserted / processed / matched /
-  needs_match / status / error), and the Sources page shows the last 10 — but nothing tells you when
-  the feed stops working. A failed cron is invisible until someone notices the pipeline is empty.
+- ~~**No alerting.**~~ **CLOSED.** `source_runs` always recorded every pull, but nothing told you
+  when the feed stopped working. `lib/feedHealth.js` now turns those rows into one honest answer
+  per source: a red banner on Today and on Sources, the last run's status under each feed, and
+  "never run" for a feed that has never run at all. The raw error is never shown on its own —
+  `fetch failed` becomes *"the county site could not be reached from this server — check the
+  firewall, the proxy, or the allow-list"*. The banner also says the data on screen is the last
+  data that came in, not today's. 11 tests.
 - **Cron schedule is off by an hour half the year.** `vercel.json` says `"0 15 * * *"` = 15:00 UTC
   = **07:00 Pacific in winter, 08:00 Pacific in summer**. The README already qualified this
   ("8am Pacific / 7am during Pacific standard time"); the Sources page did not, and now says
@@ -493,7 +497,18 @@ A  test/helpers/db.mjs                shared PGlite harness + a postgres.js-shap
 A  test/enrichment.test.mjs           13 worker + provisional-equity tests
 ```
 
-Tests went from 36 to **49**, all passing. `npm run build` is clean on Next 16.4.2 and
+### Feed alerting
+
+```
+A  lib/feedHealth.js                  one honest answer per feed: ok, failed, or never run
+M  app/page.js                        red banner on Today when a feed is broken
+M  app/sources/page.js                red banner + the last run's status under each feed
+M  app/sources/actions.js             "fetch failed" becomes an actionable sentence
+M  lib/ingest.js                      reports histories sitting in an error state
+A  test/feedHealth.test.mjs           11 tests
+```
+
+Tests went from 36 to **60**, all passing. `npm run build` is clean on Next 16.4.2 and
 `npm audit --audit-level=high` reports 0 vulnerabilities.
 
 > **CI has never actually run on this repository.** Every workflow run — including the ones on this

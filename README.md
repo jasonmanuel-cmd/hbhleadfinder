@@ -114,6 +114,24 @@ New leads get an automatic first follow-up: NTS 1 day, NOD 2 days, letters 14 da
 
 "Pull now" and "Build histories" on the Sources page run the same jobs on demand; runs are logged in `source_runs`.
 
+## When the feed cannot run
+
+The live feed reads the county's public site over the network. If the server cannot reach it,
+the pull fails, the failure is recorded in `source_runs`, and **the dashboard says so** — a red
+banner on Today, a red banner on Sources, and the last run's status under each feed. "fetch failed"
+is never shown on its own; it is turned into something actionable:
+
+> the county site could not be reached from this server — The server has no outbound network
+> access to it. Check the firewall, the proxy, or the allow-list.
+
+The banner also says plainly that what you are looking at is the **last data that came in**, not
+today's. A feed that goes quiet is the failure mode nobody notices.
+
+**The dashboard still works when the feed cannot.** Import leads as CSV on
+[Add / Import](/add) — that path is entirely local (it goes through the database, not the
+network), and it deduplicates on the source and record id, so re-importing the same file is
+safe. Column list is under *Dashboard* above.
+
 ## Dashboard
 | Page | Purpose |
 |---|---|
