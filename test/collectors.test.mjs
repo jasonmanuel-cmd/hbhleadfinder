@@ -4,8 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseKernResults, isEntity } from '../lib/collectors/kernRecorderParse.js';
-import { borrowersFrom, peopleFor } from '../lib/collectors/kernRecorder.js';
+import { parseKernResults, isEntity, matchesClass, foldText, decode } from '../lib/collectors/kernRecorderParse.js';
+import { borrowersFrom, peopleFor, kernRecordsFromHtml, detectClass } from '../lib/collectors/kernRecorder.js';
 import { buildDossier } from '../lib/collectors/kernHistory.js';
 import { parseCsv } from '../lib/csv.js';
 import { personName } from '../lib/letters.js';
@@ -215,4 +215,131 @@ test('recorder names are turned into mailing names', () => {
 
 test('a married couple is merged into one mailing name', () => {
   assert.equal(personName('AGUILAR ISMAEL & BRIGITT'), 'Ismael & Brigitt Aguilar');
+});
+
+// ---------------------------------------------------------------------------------------------
+// The county's wording must not decide which leads survive
+// ---------------------------------------------------------------------------------------------
+
+test("a typographic apostrophe does not drop every trustee's sale", () => {
+  // The county renders the class with a right single quote. The class list in the
+  // code has an ASCII one. Comparing them literally threw every NTS filing away
+  // without a word, because the comparison is a filter and a filter that drops
+  // everything looks exactly like a filter that worked.
+  assert.equal(matchesClass(["Notice of Trustee’s Sale"], "Notice of Trustee's Sale"), true);
+  assert.equal(matchesClass(["NOTICE OF TRUSTEE'S SALE"], "Notice of Trustee's Sale"), true);
+  assert.equal(matchesClass(["Notice of Trustee’s Sale "], "Notice of Trustee's Sale"), true);
+});
+
+test('an en dash does not drop every TOD affidavit', () => {
+  assert.equal(matchesClass(['Affidavit – TOD'], 'Affidavit - TOD'), true);
+  assert.equal(matchesClass(['Affidavit - TOD'], 'Affidavit - TOD'), true);
+});
+
+test('a class that is not there is still not there', () => {
+  assert.equal(matchesClass(['Default Notice'], "Notice of Trustee's Sale"), false);
+  assert.equal(matchesClass([], "Notice of Trustee's Sale"), false);
+  assert.equal(matchesClass(undefined, "Notice of Trustee's Sale"), false);
+});
+
+test('the parser understands numeric and named typographic entities', () => {
+  // Decoding produces the real character; folding is what makes it comparable.
+  assert.match(decode('Notice of Trustee&#x2019;s Sale'), /Trustee’s Sale/);
+  assert.match(decode('Notice of Trustee&rsquo;s Sale'), /Trustee’s Sale/);
+  assert.match(decode('Affidavit &ndash; TOD'), /Affidavit – TOD/);
+  // A site that sends raw UTF-8 instead of an entity is handled by the fold.
+  assert.equal(matchesClass(['Notice of Trustee’s Sale'], "Notice of Trustee's Sale"), true);
+  assert.equal(foldText('Affidavit – TOD'), 'AFFIDAVIT - TOD');
+});
+
+test('the recording date is read from the date cell, not from a name', () => {
+  const { rows } = parseKernResults(`<html><body><table>
+    <tr valign="top">
+      <td><a href="alldetail?x=1">2026100123</a></td>
+      <td width="30%">Default Notice</td>
+      <td width="53%">SMITH JOHN A (R)<br>DECD (E)</td>
+      <td>10/05/2026</td>
+    </tr>
+  </table></body></html>`);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].recorded_date, '2026-10-05');
+});
+
+// ---------------------------------------------------------------------------------------------
+// A saved county results page
+// ---------------------------------------------------------------------------------------------
+
+const COUNTY_PAGE = `<html><body><table>
+  <tr valign="top">
+    <td width="10%"><a href="/cgi-bin/Osearchc.mbr/alldetail?USERKEY=ABC">2026100421</a></td>
+    <td width="30%">Notice of Trustee&#x2019;s Sale</td>
+    <td width="53%">SALAZAR MARISOL A (R)<br>WELLS FARGO BANK NA (E)</td>
+    <td width="10%">10/05/2026</td>
+  </tr>
+  <tr valign="top">
+    <td width="10%"><a href="/cgi-bin/Osearchc.mbr/alldetail?USERKEY=ABC">2026100422</a></td>
+    <td width="30%">Default Notice</td>
+    <td width="53%">HERRERA RAMON (R)</td>
+    <td width="10%">10/07/2026</td>
+  </tr>
+  <tr valign="top">
+    <td width="10%"><a href="/cgi-bin/Osearchc.mbr/alldetail?USERKEY=ABC">2026100423</a></td>
+    <td width="30%">Affidavit &ndash; TOD</td>
+    <td width="53%">WHITFIELD HAROLD J DECD (R)<br>WHITFIELD SUE ANN (E)</td>
+    <td width="10%">10/08/2026</td>
+  </tr>
+</table></body></html>`;
+
+test('a saved county page is read with the same rules as the live feed', () => {
+  const to = new Date(Date.UTC(2026, 9, 21));
+  const from = new Date(to.getTime() - 30 * 86400000);
+  const recs = kernRecordsFromHtml(COUNTY_PAGE, { from, to });
+
+  assert.equal(recs.length, 3);
+  assert.deepEqual(recs.map((r) => r.source_type), [
+    'notice_of_trustee_sale', 'notice_of_default', 'tod_affidavit',
+  ]);
+  assert.equal(recs[0].source_record_id, '2026100421');
+  assert.equal(recs[0].event_date, '2026-10-05');
+});
+
+test('a lender in the grantee column never becomes the lead', () => {
+  const to = new Date(Date.UTC(2026, 9, 21));
+  const from = new Date(to.getTime() - 30 * 86400000);
+  const recs = kernRecordsFromHtml(COUNTY_PAGE, { from, to });
+  // The bank stays in the raw record of what the document said...
+  assert.ok(recs[0].raw_payload.parties.some((p) => p.name.includes('WELLS FARGO')));
+  // ...but it is never the person we call, mail, or look up the history for.
+  assert.equal(recs[0].raw_owner_name, 'SALAZAR MARISOL A');
+  assert.ok(!recs[0].raw_payload.borrowers.some((n) => n.includes('WELLS FARGO')));
+  assert.ok(!recs[0].raw_payload.history_names.some((n) => n.includes('WELLS FARGO')));
+});
+
+test('a TOD filing leads with the heir, not the decedent', () => {
+  const to = new Date(Date.UTC(2026, 9, 21));
+  const from = new Date(to.getTime() - 30 * 86400000);
+  const recs = kernRecordsFromHtml(COUNTY_PAGE, { from, to });
+  const tod = recs.find((r) => r.source_type === 'tod_affidavit');
+  assert.equal(tod.raw_owner_name, 'WHITFIELD SUE ANN');
+  assert.ok(tod.raw_payload.people.some((p) => p.role === 'decedent' && p.name === 'WHITFIELD HAROLD J'));
+  assert.ok(tod.raw_payload.people.some((p) => p.decision_maker && p.name === 'WHITFIELD SUE ANN'));
+});
+
+test('a page that is not a results page is refused with a usable message', () => {
+  const to = new Date(Date.UTC(2026, 9, 21));
+  const from = new Date(to.getTime() - 30 * 86400000);
+  assert.throws(() => kernRecordsFromHtml('<html><body>Search form</body></html>', { from, to }),
+    /results.*page|not the search form/i);
+});
+
+test('a page in a class this app does not know is reported, not silently dropped', () => {
+  const to = new Date(Date.UTC(2026, 9, 21));
+  const from = new Date(to.getTime() - 30 * 86400000);
+  const page = `<html><body><table><tr valign="top">
+    <td width="10%"><a href="/cgi-bin/Osearchc.mbr/alldetail?USERKEY=ABC">2026100999</a></td>
+    <td width="30%">Marriage License</td>
+    <td width="53%">SOMEONE ELSE (R)</td>
+    <td width="10%">10/09/2026</td>
+  </tr></table></body></html>`;
+  assert.throws(() => kernRecordsFromHtml(page, { from, to }), /document class this app knows about/);
 });

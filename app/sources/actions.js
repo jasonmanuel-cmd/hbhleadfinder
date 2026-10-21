@@ -68,3 +68,17 @@ export async function clearDemoData() {
   } catch (e) { err = dbError(e); }
   redirect(`/sources?${err ? 'error' : 'ok'}=${encodeURIComponent(err || msg)}`);
 }
+
+export async function importCountyPage(fd) {
+  let msg = null, err = null;
+  try {
+    const file = fd.get('file');
+    if (!file || typeof file !== 'object' || !file.size) throw new Error('Choose the saved county results page.');
+    const html = await file.text();
+    const { ingestKernHtml } = await import('@/lib/ingest');
+    const r = await ingestKernHtml(html, { trigger: 'manual', lookbackDays: 60 });
+    msg = `Read ${r.fetched} filing(s) from the saved page · ${r.inserted} new · ${r.processed} scored · ${r.matched} attached to a property you already track · ${r.needs_match} need a parcel match`
+      + (r.skipped ? ` · ${r.skipped} filing(s) in a document class this app does not know` : '');
+  } catch (e) { err = dbError(e); }
+  redirect(`/sources?${err ? 'error' : 'ok'}=${encodeURIComponent(err || msg)}`);
+}

@@ -357,7 +357,39 @@ for exactly this (`RESOLVERS` keyed `"ST:County"`), and the collector layer
 (`lib/ingest.js` → `COLLECTORS`) already supports more than one source. The extension points exist;
 they just haven't been filled in.
 
-### 3. The Kern scraper is unverified against the live site
+### 3. The Kern scraper is unverified against the live site — **but the obvious bugs in it are fixed**
+
+The live site has never been reachable from this sandbox (the egress allow-list blocks
+`recorderonline.co.kern.ca.us`; GitHub Actions is billing-locked; there is no proxy). So the
+collector has still never run against the real pages. Reviewing it anyway turned up three bugs
+that would each have made it **silently return nothing** — and a feed that returns nothing looks
+exactly like a feed that works:
+
+- **The county's typography.** It renders "Notice of Trustee’s Sale" with a typographic
+  apostrophe and "Affidavit – TOD" with an en dash. The class list has ASCII. The comparison is a
+  *filter*, so the mismatch did not raise — it quietly threw away **every trustee's sale and
+  every TOD filing**, the two most valuable lead types the app has. Both sides are now folded to a
+  comparable form before they are compared.
+- **The session.** The county sets a cookie on the search form and expects it back on the
+  results page. Node's `fetch` keeps no cookies between calls, so the search came back empty.
+  The collector now keeps the ones that matter. (The search key is also fetched once per run
+  instead of once per document class — eleven fewer requests to the county.)
+- **Relative links.** The results page hands out relative "next page" links. `fetch` cannot parse
+  a relative URL, so pagination would have thrown on the first extra page. They are resolved now.
+
+And the collector now **fails loudly instead of quietly**: if a page returns rows and none of them
+match the class that was asked for, it says so and names what the page actually said, rather than
+returning an empty list. One broken class no longer throws away the other ten — it is reported
+and the rest of the pull continues.
+
+### 3a. Getting real data in when the server cannot reach the county
+
+The county's index is public, so the page can be brought in by hand: open the search in your own
+browser, save the **results** page, and import it — from the Sources page or
+`npm run pull -- --file page.html`. It goes through the same parser, the same class rules and the
+same ingest pipeline as the live feed. The document class is worked out from the page itself.
+
+### 3b. The Kern scraper is unverified against the live site
 I could not reach `recorderonline.co.kern.ca.us` or `maps.kerncounty.com` from this sandbox
 (outbound network is restricted to GitHub/npm/PyPI), so **I could not confirm the county's HTML
 still matches the parser, or that the parcel layers are still published under the expected names**.
@@ -505,10 +537,24 @@ M  app/page.js                        red banner on Today when a feed is broken
 M  app/sources/page.js                red banner + the last run's status under each feed
 M  app/sources/actions.js             "fetch failed" becomes an actionable sentence
 M  lib/ingest.js                      reports histories sitting in an error state
-A  test/feedHealth.test.mjs           11 tests
+A  test/feedHealth.test.mjs           13 tests
 ```
 
-Tests went from 36 to **60**, all passing. `npm run build` is clean on Next 16.4.2 and
+### Making the feed actually work
+
+```
+M  lib/collectors/kernRecorderParse.js  fold the county's typography before comparing
+M  lib/collectors/kernRecorder.js       cookies, one session per run, relative URLs,
+                                        loud failure when a class stops matching
+M  lib/ingest.js                        relative imports (plain Node cannot use "@/"),
+                                        ingest a saved county page, report partial runs
+A  scripts/pull.mjs                  npm run pull / npm run pull:check / --file page.html
+M  app/sources/actions.js            import a saved county results page
+M  app/sources/page.js               the upload box
+M  package.json                      pull + pull:check scripts
+```
+
+Tests went from 36 to **72**, all passing. `npm run build` is clean on Next 16.4.2 and
 `npm audit --audit-level=high` reports 0 vulnerabilities.
 
 > **CI has never actually run on this repository.** Every workflow run — including the ones on this

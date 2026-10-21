@@ -114,6 +114,29 @@ New leads get an automatic first follow-up: NTS 1 day, NOD 2 days, letters 14 da
 
 "Pull now" and "Build histories" on the Sources page run the same jobs on demand; runs are logged in `source_runs`.
 
+## Pulling the feed from the command line
+
+```bash
+npm run pull            # the last 10 days, into the database
+npm run pull -- --days 30
+npm run pull:check      # no database, no writes: is the county reachable and does the parser still fit?
+```
+
+`pull:check` is the canary. When the pipeline goes quiet, run it: it prints what each document
+class returned and tells you whether the county changed its pages or you simply had no filings.
+
+**If this machine cannot reach the county site** — a firewall, a sandbox, a laptop offline at the
+time — the feed can still be brought in by hand, because the county's index is public:
+
+1. Open the county's *Search by Document Class* in your own browser and run the search.
+2. Save the **results** page (the list of documents) as HTML.
+3. Drop it on **Sources → Import a saved county results page**, or
+   `npm run pull -- --file /path/to/page.html`.
+
+It goes through the same parser, the same class rules and the same ingest pipeline as the live
+feed, so it is the same data — it just arrived by a different road. The document class is worked
+out from the page itself; you do not have to say which one it is.
+
 ## When the feed cannot run
 
 The live feed reads the county's public site over the network. If the server cannot reach it,
@@ -127,10 +150,12 @@ is never shown on its own; it is turned into something actionable:
 The banner also says plainly that what you are looking at is the **last data that came in**, not
 today's. A feed that goes quiet is the failure mode nobody notices.
 
-**The dashboard still works when the feed cannot.** Import leads as CSV on
-[Add / Import](/add) — that path is entirely local (it goes through the database, not the
-network), and it deduplicates on the source and record id, so re-importing the same file is
-safe. Column list is under *Dashboard* above.
+**The dashboard still works when the feed cannot.** Two ways in, both local:
+
+- **Save the county's results page** and import it (see above). Real county filings.
+- **Import a CSV** on [Add / Import](/add). The path is entirely local — it goes through the
+  database, not the network — and it deduplicates on the source and record id, so re-importing
+  the same file is safe. Column list is under *Dashboard* above.
 
 ## Demo data is labelled as demo data
 

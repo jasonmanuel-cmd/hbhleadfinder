@@ -3,7 +3,7 @@ import { label, dateTime } from '@/lib/format';
 import { Flash } from '@/components/ui';
 import { COLLECTORS } from '@/lib/ingest';
 import { feedStatus, demoDataCount } from '@/lib/feedHealth';
-import { pullNow, buildHistories, fillAddresses, runEnrichmentNow, clearDemoData } from './actions';
+import { pullNow, buildHistories, fillAddresses, runEnrichmentNow, clearDemoData, importCountyPage } from './actions';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -71,6 +71,17 @@ export default async function Sources({ searchParams }) {
           </form>
           );
         })}
+        <form action={importCountyPage} className="toolbar" style={{ marginBottom: 12 }}>
+          <div style={{ flex: 2 }}><strong>Import a saved county results page</strong>
+            <div className="muted small">For when this server cannot reach the county site. Open the county's
+              search in your own browser, run the search, save the results page as HTML, and drop it here.
+              It goes through the same parser the live feed uses, so the data is the same data.</div></div>
+          <div style={{ minWidth: 200 }}>
+            <label htmlFor="county-page">Saved page (.html)</label>
+            <input id="county-page" name="file" type="file" accept=".html,.htm,text/html" required />
+          </div>
+          <div style={{ alignSelf: 'flex-end' }}><button className="btn primary">Import page</button></div>
+        </form>
         <form action={fillAddresses} className="toolbar" style={{ marginBottom: 12 }}>
           <div style={{ flex: 2 }}><strong>Street addresses from APN</strong>
             <div className="muted small">{na.addr} leads with a recorder or court signal have an APN but no street address or ZIP.
